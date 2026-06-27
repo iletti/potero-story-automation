@@ -59,17 +59,24 @@ function errorMessage(err: unknown): string {
  * Outstand. Tries a few candidates so a single failing file can't waste a slot,
  * and disables a file that fails repeatedly.
  */
-export async function publishNextStory(now: Date = new Date()): Promise<PublishResult> {
+export async function publishNextStory(
+  now: Date = new Date(),
+  opts: { force?: boolean } = {},
+): Promise<PublishResult> {
   const sql = getSql();
   const settings = await getSettings();
   const plan = await getDailyPlan(now);
 
-  if (settings.paused) {
-    return { status: "skipped", reason: "paused", plan };
-  }
-  if (plan.postedToday >= plan.allowance) {
-    const reason = plan.postedToday >= plan.target ? "daily_target_reached" : "paced_for_now";
-    return { status: "skipped", reason, plan };
+  // `force` (manual "Publish next now" / ?force=1) bypasses the pause + pacing
+  // gates so an operator can post on demand. Cooldown/eligibility still apply.
+  if (!opts.force) {
+    if (settings.paused) {
+      return { status: "skipped", reason: "paused", plan };
+    }
+    if (plan.postedToday >= plan.allowance) {
+      const reason = plan.postedToday >= plan.target ? "daily_target_reached" : "paced_for_now";
+      return { status: "skipped", reason, plan };
+    }
   }
 
   let lastError: { mediaId: string; logId: string; message: string } | null = null;

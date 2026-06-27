@@ -45,6 +45,6 @@ export async function syncNow(): Promise<void> {
 }
 
 export async function publishNow(): Promise<void> {
-  await publishNextStory();
+  await publishNextStory(new Date(), { force: true });
   revalidatePath("/");
 }
