@@ -70,18 +70,13 @@ export async function requestUploadUrl(input: {
   return { uploadUrl: data.upload_url, providerMediaId: data.media_id, expiresAt: data.expires_at };
 }
 
-/** Streams the media from a source URL (Vercel Blob) straight to Outstand without buffering it. */
-export async function uploadMediaFromUrl(input: {
-  sourceUrl: string;
+/** Streams a media body straight to the Outstand upload URL without buffering it. */
+export async function uploadMedia(input: {
   uploadUrl: string;
+  body: ReadableStream<Uint8Array>;
   contentType: string;
   sizeBytes: number;
 }): Promise<void> {
-  const source = await fetch(input.sourceUrl);
-  if (!source.ok || !source.body) {
-    throw new OutstandError(`Could not read source media (${source.status}).`, { status: source.status });
-  }
-
   // `duplex` is required for streaming request bodies but is not in the DOM lib types.
   const putInit: RequestInit & { duplex: "half" } = {
     method: "PUT",
@@ -89,7 +84,7 @@ export async function uploadMediaFromUrl(input: {
       "Content-Type": input.contentType,
       "Content-Length": String(input.sizeBytes),
     },
-    body: source.body,
+    body: input.body,
     duplex: "half",
   };
 
