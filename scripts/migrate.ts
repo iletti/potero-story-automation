@@ -12,9 +12,12 @@ async function main() {
   const ddl = readFileSync(join(process.cwd(), "lib", "schema.sql"), "utf8");
 
   const statements = ddl
+    .split("\n")
+    .filter((line) => !line.trim().startsWith("--"))
+    .join("\n")
     .split(";")
     .map((s) => s.trim())
-    .filter((s) => s.length > 0 && !s.startsWith("--"));
+    .filter((s) => s.length > 0);
 
   for (const statement of statements) {
     await sql.query(statement);

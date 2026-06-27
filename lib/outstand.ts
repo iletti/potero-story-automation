@@ -144,8 +144,12 @@ export async function createPost(input: {
   caption?: string;
   idempotencyKey: string;
 }): Promise<{ providerPostId: string }> {
-  const container: Record<string, unknown> = { mediaIds: input.providerMediaIds };
-  if (input.caption) container.content = input.caption;
+  const container: Record<string, unknown> = {
+    mediaIds: input.providerMediaIds,
+    // Outstand requires non-empty `content` even for captionless Stories.
+    // A single space keeps the Story effectively captionless.
+    content: input.caption ?? " ",
+  };
 
   const body: Record<string, unknown> = {
     containers: [container],
