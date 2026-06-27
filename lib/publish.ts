@@ -76,14 +76,14 @@ export async function publishNextStory(now: Date = new Date()): Promise<PublishR
 
   for (let attempt = 0; attempt < MAX_PUBLISH_ATTEMPTS; attempt++) {
     const candidates = (await sql`
-      select id, drive_file_id, mime_type, size_bytes
+      select id, drive_file_id, name, mime_type, size_bytes
       from media
       where status = 'active' and enabled = true
         and (last_posted_at is null or last_posted_at < now() - make_interval(hours => ${settings.minReuseHours}))
         and (retry_after is null or retry_after < now())
       order by last_posted_at asc nulls first, created_at asc
       limit 1
-    `) as Array<{ id: string; drive_file_id: string; mime_type: string; size_bytes: string | number }>;
+    `) as Array<{ id: string; drive_file_id: string; name: string; mime_type: string; size_bytes: string | number }>;
 
     const candidate = candidates[0];
     if (!candidate) {
@@ -111,14 +111,13 @@ export async function publishNextStory(now: Date = new Date()): Promise<PublishR
 
     try {
       const upload = await requestUploadUrl({
-        fileSizeBytes: sizeBytes,
+        filename: candidate.name,
         contentType: candidate.mime_type,
-        idempotencyKey: logId,
       });
 
       const body = await downloadStream(candidate.drive_file_id);
       await uploadMedia({ uploadUrl: upload.uploadUrl, body, contentType: candidate.mime_type, sizeBytes });
-      await confirmUpload(upload.providerMediaId);
+      await confirmUpload(upload.providerMediaId, sizeBytes);
 
       const post = await createPost({
         providerMediaIds: [upload.providerMediaId],

@@ -1,9 +1,10 @@
 import { createHmac, timingSafeEqual } from "crypto";
 
 /**
- * Minimal Outstand API client. Request/response shapes match the Outstand
- * publishing API: request an upload URL, stream the media to it, confirm, then
- * create the post.
+ * Outstand API client (https://api.outstand.so). Verified against the Outstand
+ * docs: request an upload URL, PUT the bytes, confirm, then create the post.
+ *   - Media:  POST /v1/media/upload  -> PUT upload_url -> POST /v1/media/{id}/confirm
+ *   - Post:   POST /v1/posts/  { containers, accounts, instagram }
  */
 
 export class OutstandError extends Error {
@@ -25,17 +26,26 @@ function getConfig(): { baseUrl: string; apiKey: string } {
   return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
 }
 
-/** The connected Outstand social account(s) to publish to (comma-separated env). */
-export function getSocialAccountIds(): string[] {
-  const raw = process.env.OUTSTAND_SOCIAL_ACCOUNT_IDS ?? "";
-  const ids = raw
+/**
+ * The connected account(s) to publish to (comma-separated env). Each value may
+ * be a network name (e.g. "instagram"), a username, or an account id — Outstand
+ * resolves it against the org's connected accounts.
+ */
+export function getAccounts(): string[] {
+  const raw = process.env.OUTSTAND_ACCOUNTS ?? process.env.OUTSTAND_SOCIAL_ACCOUNT_IDS ?? "";
+  const accounts = raw
     .split(/[,\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
-  if (ids.length === 0) {
-    throw new OutstandError("OUTSTAND_SOCIAL_ACCOUNT_IDS is not set (the account(s) to post to).");
+  if (accounts.length === 0) {
+    throw new OutstandError("OUTSTAND_ACCOUNTS is not set (the account(s) to post to).");
   }
-  return ids;
+  return accounts;
+}
+
+/** Whether to publish as an Instagram Story (default true). */
+function publishAsStory(): boolean {
+  return (process.env.OUTSTAND_PUBLISH_AS_STORY ?? "true").toLowerCase() !== "false";
 }
 
 async function postJson(path: string, body: unknown, extraHeaders: Record<string, string> = {}) {
@@ -66,34 +76,29 @@ async function postJson(path: string, body: unknown, extraHeaders: Record<string
   return response.json();
 }
 
-export type UploadUrl = { uploadUrl: string; providerMediaId: string; expiresAt?: string };
+export type UploadUrl = { uploadUrl: string; providerMediaId: string };
 
+/** POST /v1/media/upload — returns a presigned PUT URL (valid 1h) and the media id. */
 export async function requestUploadUrl(input: {
-  fileSizeBytes: number;
+  filename: string;
   contentType: string;
-  idempotencyKey: string;
 }): Promise<UploadUrl> {
-  // NOTE: exact request/response field names for the upload-URL endpoint are not
-  // yet confirmed against the Outstand docs. We send both camelCase and
-  // snake_case keys, and read the response leniently, so it works either way.
-  const data = await postJson("/v1/media/upload-url", {
-    fileSizeBytes: input.fileSizeBytes,
-    contentType: input.contentType,
-    fileSize: input.fileSizeBytes,
-    file_size_bytes: input.fileSizeBytes,
+  const json = await postJson("/v1/media/upload", {
+    filename: input.filename,
     content_type: input.contentType,
   });
-  const uploadUrl = data.uploadUrl ?? data.upload_url ?? data.url;
-  const providerMediaId = data.mediaId ?? data.media_id ?? data.id;
+  const data = json?.data ?? {};
+  const uploadUrl = data.upload_url;
+  const providerMediaId = data.id;
   if (!uploadUrl || !providerMediaId) {
-    throw new OutstandError("Outstand upload-URL response missing uploadUrl/mediaId.", {
-      body: JSON.stringify(data).slice(0, 500),
+    throw new OutstandError("Outstand upload response missing data.upload_url / data.id.", {
+      body: JSON.stringify(json).slice(0, 500),
     });
   }
-  return { uploadUrl, providerMediaId, expiresAt: data.expiresAt ?? data.expires_at };
+  return { uploadUrl, providerMediaId: String(providerMediaId) };
 }
 
-/** Streams a media body straight to the Outstand upload URL without buffering it. */
+/** Streams a media body straight to the presigned URL without buffering it. */
 export async function uploadMedia(input: {
   uploadUrl: string;
   body: ReadableStream<Uint8Array>;
@@ -128,53 +133,57 @@ export async function uploadMedia(input: {
   }
 }
 
-export async function confirmUpload(providerMediaId: string): Promise<void> {
-  await postJson(`/v1/media/${encodeURIComponent(providerMediaId)}/confirm`, {});
+/** POST /v1/media/{id}/confirm — marks the uploaded file active. */
+export async function confirmUpload(providerMediaId: string, sizeBytes: number): Promise<void> {
+  await postJson(`/v1/media/${encodeURIComponent(providerMediaId)}/confirm`, { size: sizeBytes });
 }
 
+/** POST /v1/posts/ — publishes the media immediately to the configured accounts. */
 export async function createPost(input: {
   providerMediaIds: string[];
   caption?: string;
   idempotencyKey: string;
 }): Promise<{ providerPostId: string }> {
-  // Body shape matches Outstand's published POST /v1/posts example:
-  //   { containers: [{ content, mediaIds }], socialAccountIds: [...] }
-  // NOTE: how a Story (vs a feed post) is flagged is not yet confirmed against
-  // the docs — see README. If Outstand needs an explicit type field, add it to
-  // the container here.
-  const data = await postJson(
-    "/v1/posts",
-    {
-      containers: [{ content: input.caption ?? "", mediaIds: input.providerMediaIds }],
-      socialAccountIds: getSocialAccountIds(),
-    },
-    { "Idempotency-Key": input.idempotencyKey },
-  );
-  const providerPostId = data.id ?? data.postId ?? data.post_id;
+  const container: Record<string, unknown> = { mediaIds: input.providerMediaIds };
+  if (input.caption) container.content = input.caption;
+
+  const body: Record<string, unknown> = {
+    containers: [container],
+    accounts: getAccounts(),
+  };
+  // Instagram-specific override: publish as a Story rather than a feed post.
+  if (publishAsStory()) {
+    body.instagram = { publishAsStory: true };
+  }
+
+  const json = await postJson("/v1/posts/", body, { "Idempotency-Key": input.idempotencyKey });
+  const providerPostId = json?.post?.id ?? json?.id;
   if (!providerPostId) {
-    throw new OutstandError("Outstand create-post response missing post id.", {
-      body: JSON.stringify(data).slice(0, 500),
+    throw new OutstandError("Outstand create-post response missing post.id.", {
+      body: JSON.stringify(json).slice(0, 500),
     });
   }
-  return { providerPostId };
+  return { providerPostId: String(providerPostId) };
 }
 
-/**
- * Verifies an inbound Outstand webhook. Supports both an HMAC-SHA256 signature
- * (hex) of the raw body and a static shared-token delivery.
- */
-export function verifyOutstandWebhook(rawBody: string, signatureOrToken: string): boolean {
+export type OutstandWebhook = { event: string; postId: string | null };
+
+/** Parses an Outstand webhook body: { event, data: { postId, ... } }. */
+export function parseWebhook(body: unknown): OutstandWebhook | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as { event?: unknown; data?: { postId?: unknown } };
+  if (typeof b.event !== "string") return null;
+  const postId = typeof b.data?.postId === "string" ? b.data.postId : null;
+  return { event: b.event, postId };
+}
+
+/** Verifies the X-Outstand-Signature header: HMAC-SHA256(secret, rawBody) in hex. */
+export function verifyOutstandWebhook(rawBody: string, signature: string): boolean {
   const secret = process.env.OUTSTAND_WEBHOOK_SECRET;
-  if (!secret || !signatureOrToken) return false;
-
-  const expectedHmac = createHmac("sha256", secret).update(rawBody).digest("hex");
-  if (equal(expectedHmac, signatureOrToken)) return true;
-  return equal(secret, signatureOrToken);
-}
-
-function equal(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length) return false;
-  return timingSafeEqual(ab, bb);
+  if (!secret || !signature) return false;
+  const expected = createHmac("sha256", secret).update(rawBody).digest("hex");
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
 }

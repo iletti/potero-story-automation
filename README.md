@@ -112,8 +112,10 @@ a **Google Cloud** project, and your **Outstand** API credentials.
    - `GOOGLE_DRIVE_FOLDER_ID` — from step 1.7.
    - `OUTSTAND_API_BASE_URL` (`https://api.outstand.so`), `OUTSTAND_API_KEY` —
      your Outstand credentials.
-   - `OUTSTAND_SOCIAL_ACCOUNT_IDS` — the connected account(s) to post to
-     (comma-separated). Required — publishing fails without it.
+   - `OUTSTAND_ACCOUNTS` — account(s) to post to (comma-separated; a network name
+     like `instagram`, a username, or an account id). Required.
+   - `OUTSTAND_PUBLISH_AS_STORY` — `true` (default) posts an Instagram Story;
+     `false` posts a feed post.
    - `OUTSTAND_WEBHOOK_SECRET` — only if you use the optional webhook (below).
 4. Deploy.
 
@@ -144,23 +146,21 @@ That's it — from now on you only touch the Drive folder.
   disabled / removed) and last-posted time. Disable/enable individual files.
 - **Recent posts** — outcome of each publish attempt.
 
-## Outstand API compatibility (please confirm)
+## Outstand API mapping (verified against the docs)
 
-The Outstand client (`lib/outstand.ts`) follows Outstand's published example for
-`POST /v1/posts`: `{ containers: [{ content, mediaIds }], socialAccountIds }`
-with `Authorization: Bearer`. Three things could not be confirmed against the
-full docs and are worth a 2-minute check before relying on it:
+`lib/outstand.ts` implements the documented Outstand flow:
 
-1. **Media upload fields** — the get-upload-URL request/response key names. The
-   client sends both camelCase + snake_case and reads the response leniently, so
-   it should work either way, but confirm the endpoint path/shape.
-2. **Story flag** — how Outstand marks a post as a *Story* (vs a feed post). If
-   it needs an explicit field, add it to the container in `createPost`.
-3. **Webhook payload** — the optional webhook parses `postId` / `outcome`;
-   confirm against Outstand's webhook docs.
+| Step | Call |
+|---|---|
+| Get upload URL | `POST /v1/media/upload` `{ filename, content_type }` → `data.upload_url`, `data.id` |
+| Upload bytes | `PUT <upload_url>` (streamed from Drive) |
+| Confirm | `POST /v1/media/{id}/confirm` `{ size }` |
+| Publish | `POST /v1/posts/` `{ containers:[{ mediaIds }], accounts, instagram:{ publishAsStory } }` → `post.id` |
 
-The first live **Publish next now** surfaces any mismatch as the error text on
-the "Recent posts" row, which makes these quick to pin down.
+Auth is `Authorization: Bearer <OUTSTAND_API_KEY>`. A Story is published by
+setting `instagram.publishAsStory = true` (controlled by `OUTSTAND_PUBLISH_AS_STORY`).
+The optional webhook verifies the `X-Outstand-Signature` HMAC-SHA256 header and
+reacts to `post.published` / `post.error` events (`data.postId`).
 
 ## Optional: delivery webhook
 

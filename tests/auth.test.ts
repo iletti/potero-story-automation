@@ -39,16 +39,11 @@ describe("checkBasicAuth", () => {
 });
 
 describe("verifyOutstandWebhook", () => {
-  it("accepts a valid HMAC signature", () => {
+  it("accepts a valid HMAC-SHA256 signature", () => {
     process.env.OUTSTAND_WEBHOOK_SECRET = "whsec";
-    const body = JSON.stringify({ postId: "p_1", outcome: "success" });
+    const body = JSON.stringify({ event: "post.published", data: { postId: "p_1" } });
     const sig = createHmac("sha256", "whsec").update(body).digest("hex");
     expect(verifyOutstandWebhook(body, sig)).toBe(true);
-  });
-
-  it("accepts a valid static token", () => {
-    process.env.OUTSTAND_WEBHOOK_SECRET = "whsec";
-    expect(verifyOutstandWebhook("{}", "whsec")).toBe(true);
   });
 
   it("rejects an invalid signature", () => {

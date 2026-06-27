@@ -1,46 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSql } from "@/lib/db";
-import { verifyOutstandWebhook } from "@/lib/outstand";
+import { parseWebhook, verifyOutstandWebhook } from "@/lib/outstand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
- * Optional: records Outstand's final delivery outcome against the post_log row.
- * The system works without it (a successful POST /v1/posts already marks a post
- * published); this just records confirmed/failed delivery to the social account.
+ * Optional: records Outstand's delivery outcome against the post_log row.
+ * Outstand signs each delivery with `X-Outstand-Signature` (HMAC-SHA256, hex)
+ * and sends `{ event, data: { postId, ... } }`. The system works without this;
+ * it just upgrades a row to `confirmed` / `failed` after delivery.
  */
 export async function POST(req: NextRequest) {
   const raw = await req.text();
-  const signature =
-    req.headers.get("x-outstand-signature") ??
-    req.headers.get("x-webhook-token") ??
-    req.headers.get("authorization")?.replace(/^Bearer\s+/i, "") ??
-    "";
+  const signature = req.headers.get("x-outstand-signature") ?? "";
 
   if (!verifyOutstandWebhook(raw, signature)) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
-  let payload: Record<string, unknown>;
+  let payload: unknown;
   try {
     payload = JSON.parse(raw);
   } catch {
     return NextResponse.json({ error: "invalid json" }, { status: 400 });
   }
 
-  const postId = (payload.postId ?? payload.post_id) as string | undefined;
-  const outcome = String(payload.outcome ?? payload.status ?? "");
-  const error = (payload.error as string | undefined) ?? null;
-
-  if (postId) {
-    const status = outcome === "success" || outcome === "published" ? "confirmed" : "failed";
+  const hook = parseWebhook(payload);
+  if (hook?.postId && (hook.event === "post.published" || hook.event === "post.error")) {
+    const status = hook.event === "post.published" ? "confirmed" : "failed";
     const sql = getSql();
-    await sql`
-      update post_log
-      set status = ${status}, error = ${error}
-      where provider_post_id = ${postId}
-    `;
+    await sql`update post_log set status = ${status} where provider_post_id = ${hook.postId}`;
   }
 
   return NextResponse.json({ ok: true });
