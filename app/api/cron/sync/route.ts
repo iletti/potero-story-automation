@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { publishNextStory } from "@/lib/publish";
+import { syncDrive } from "@/lib/sync";
 
 export const runtime = "nodejs";
-export const maxDuration = 300; // streaming large videos Drive -> Outstand
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 function authorized(req: NextRequest): boolean {
@@ -15,10 +15,16 @@ async function run(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
-  const result = await publishNextStory();
-  return NextResponse.json(result, { status: result.status === "failed" ? 500 : 200 });
+  try {
+    const summary = await syncDrive();
+    return NextResponse.json({ status: "ok", ...summary });
+  } catch (err) {
+    return NextResponse.json(
+      { status: "error", error: err instanceof Error ? err.message : String(err) },
+      { status: 500 },
+    );
+  }
 }
 
-// Vercel Cron issues GET with `Authorization: Bearer $CRON_SECRET`.
 export const GET = run;
 export const POST = run;

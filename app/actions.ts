@@ -1,48 +1,46 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { del } from "@vercel/blob";
 import { getSql } from "@/lib/db";
-import { setPaused } from "@/lib/settings";
+import { setPaused, updateSettings } from "@/lib/settings";
 import { publishNextStory } from "@/lib/publish";
+import { syncDrive } from "@/lib/sync";
 
-/** Inserts a media row after the browser finishes uploading to Vercel Blob. */
-export async function addMedia(input: {
-  url: string;
-  pathname: string;
-  contentType: string;
-  size: number;
-  caption: string;
-}): Promise<void> {
-  const sql = getSql();
-  await sql`
-    insert into media (blob_url, pathname, content_type, size_bytes, caption)
-    values (${input.url}, ${input.pathname}, ${input.contentType}, ${input.size}, ${input.caption.trim()})
-  `;
+export async function togglePause(formData: FormData): Promise<void> {
+  await setPaused(formData.get("paused") === "true");
   revalidatePath("/");
 }
 
+/** Manual per-file override (e.g. re-enable a file disabled after failures). */
 export async function toggleMedia(formData: FormData): Promise<void> {
   const id = String(formData.get("id"));
   const enabled = formData.get("enabled") === "true";
   const sql = getSql();
-  await sql`update media set enabled = ${enabled} where id = ${id}`;
+  // Re-enabling clears the failure state so it can be retried.
+  await sql`
+    update media
+    set enabled = ${enabled},
+        fail_count = case when ${enabled} then 0 else fail_count end,
+        retry_after = case when ${enabled} then null else retry_after end
+    where id = ${id}
+  `;
   revalidatePath("/");
 }
 
-export async function deleteMedia(formData: FormData): Promise<void> {
-  const id = String(formData.get("id"));
-  const sql = getSql();
-  const rows = await sql`delete from media where id = ${id} returning blob_url`;
-  const blobUrl = rows[0]?.blob_url as string | undefined;
-  if (blobUrl) {
-    await del(blobUrl).catch(() => undefined);
-  }
+export async function saveSettings(formData: FormData): Promise<void> {
+  const cooldownDays = Number(formData.get("cooldownDays"));
+  const dailyMin = Number(formData.get("dailyMin"));
+  const dailyMax = Number(formData.get("dailyMax"));
+  await updateSettings({
+    minReuseHours: Math.max(1, cooldownDays) * 24,
+    dailyMin,
+    dailyMax,
+  });
   revalidatePath("/");
 }
 
-export async function togglePause(formData: FormData): Promise<void> {
-  await setPaused(formData.get("paused") === "true");
+export async function syncNow(): Promise<void> {
+  await syncDrive();
   revalidatePath("/");
 }
 
