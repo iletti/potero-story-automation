@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkBasicAuth } from "../lib/auth";
-import { verifyOutstandWebhook } from "../lib/outstand";
+import { parseWebhook, verifyOutstandWebhook } from "../lib/outstand";
 
 function basicHeader(user: string, pass: string): string {
   return "Basic " + Buffer.from(`${user}:${pass}`).toString("base64");
@@ -53,5 +53,15 @@ describe("verifyOutstandWebhook", () => {
 
   it("rejects when no secret is configured", () => {
     expect(verifyOutstandWebhook("{}", "anything")).toBe(false);
+  });
+});
+
+describe("parseWebhook", () => {
+  it("extracts post id and error details", () => {
+    expect(parseWebhook({ event: "post.error", data: { postId: "p_1", message: "delivery failed" } })).toEqual({
+      event: "post.error",
+      postId: "p_1",
+      error: "delivery failed",
+    });
   });
 });

@@ -170,15 +170,21 @@ export async function createPost(input: {
   return { providerPostId: String(providerPostId) };
 }
 
-export type OutstandWebhook = { event: string; postId: string | null };
+export type OutstandWebhook = { event: string; postId: string | null; error: string | null };
 
 /** Parses an Outstand webhook body: { event, data: { postId, ... } }. */
 export function parseWebhook(body: unknown): OutstandWebhook | null {
   if (!body || typeof body !== "object") return null;
-  const b = body as { event?: unknown; data?: { postId?: unknown } };
+  const b = body as {
+    event?: unknown;
+    data?: { postId?: unknown; error?: unknown; message?: unknown };
+    error?: unknown;
+    message?: unknown;
+  };
   if (typeof b.event !== "string") return null;
   const postId = typeof b.data?.postId === "string" ? b.data.postId : null;
-  return { event: b.event, postId };
+  const error = [b.data?.error, b.data?.message, b.error, b.message].find((value) => typeof value === "string");
+  return { event: b.event, postId, error: error ? String(error) : null };
 }
 
 /** Verifies the X-Outstand-Signature header: HMAC-SHA256(secret, rawBody) in hex. */

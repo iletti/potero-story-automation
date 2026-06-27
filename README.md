@@ -155,10 +155,12 @@ That's it — from now on you only touch the Drive folder.
 | Get upload URL | `POST /v1/media/upload` `{ filename, content_type }` → `data.upload_url`, `data.id` |
 | Upload bytes | `PUT <upload_url>` (streamed from Drive) |
 | Confirm | `POST /v1/media/{id}/confirm` `{ size }` |
-| Publish | `POST /v1/posts/` `{ containers:[{ mediaIds }], accounts, instagram:{ publishAsStory } }` → `post.id` |
+| Publish | `POST /v1/posts/` `{ containers:[{ mediaIds, content }], accounts, instagram:{ publishAsStory } }` → `post.id` |
 
 Auth is `Authorization: Bearer <OUTSTAND_API_KEY>`. A Story is published by
 setting `instagram.publishAsStory = true` (controlled by `OUTSTAND_PUBLISH_AS_STORY`).
+For captionless Stories the app sends a single-space `content` value because
+Outstand requires a non-empty string.
 The optional webhook verifies the `X-Outstand-Signature` HMAC-SHA256 header and
 reacts to `post.published` / `post.error` events (`data.postId`).
 
@@ -166,8 +168,9 @@ reacts to `post.published` / `post.error` events (`data.postId`).
 
 Outstand can call `POST /api/webhooks/outstand` when a post finishes delivering.
 Register that URL in Outstand with your `OUTSTAND_WEBHOOK_SECRET` and the matching
-`post_log` row is updated to `confirmed` / `failed`. The system works fine
-without it.
+`post_log` row is updated to `confirmed` / `failed`. Delivery failures also put
+the media back into retry handling so a failed delivery does not stay on
+cooldown as if it had succeeded. The system works fine without it.
 
 ## Scripts
 
