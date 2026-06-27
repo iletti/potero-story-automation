@@ -6,8 +6,6 @@ import { createHmac, timingSafeEqual } from "crypto";
  * create the post.
  */
 
-const ALLOWED_POST_TYPES = new Set(["story", "feed_post", "reel", "tiktok", "youtube_short"]);
-
 export class OutstandError extends Error {
   readonly status?: number;
   readonly body?: string;
@@ -25,6 +23,19 @@ function getConfig(): { baseUrl: string; apiKey: string } {
   if (!baseUrl) throw new OutstandError("OUTSTAND_API_BASE_URL is not set.");
   if (!apiKey) throw new OutstandError("OUTSTAND_API_KEY is not set.");
   return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
+}
+
+/** The connected Outstand social account(s) to publish to (comma-separated env). */
+export function getSocialAccountIds(): string[] {
+  const raw = process.env.OUTSTAND_SOCIAL_ACCOUNT_IDS ?? "";
+  const ids = raw
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (ids.length === 0) {
+    throw new OutstandError("OUTSTAND_SOCIAL_ACCOUNT_IDS is not set (the account(s) to post to).");
+  }
+  return ids;
 }
 
 async function postJson(path: string, body: unknown, extraHeaders: Record<string, string> = {}) {
@@ -62,12 +73,24 @@ export async function requestUploadUrl(input: {
   contentType: string;
   idempotencyKey: string;
 }): Promise<UploadUrl> {
+  // NOTE: exact request/response field names for the upload-URL endpoint are not
+  // yet confirmed against the Outstand docs. We send both camelCase and
+  // snake_case keys, and read the response leniently, so it works either way.
   const data = await postJson("/v1/media/upload-url", {
+    fileSizeBytes: input.fileSizeBytes,
+    contentType: input.contentType,
+    fileSize: input.fileSizeBytes,
     file_size_bytes: input.fileSizeBytes,
     content_type: input.contentType,
-    idempotency_key: input.idempotencyKey,
   });
-  return { uploadUrl: data.upload_url, providerMediaId: data.media_id, expiresAt: data.expires_at };
+  const uploadUrl = data.uploadUrl ?? data.upload_url ?? data.url;
+  const providerMediaId = data.mediaId ?? data.media_id ?? data.id;
+  if (!uploadUrl || !providerMediaId) {
+    throw new OutstandError("Outstand upload-URL response missing uploadUrl/mediaId.", {
+      body: JSON.stringify(data).slice(0, 500),
+    });
+  }
+  return { uploadUrl, providerMediaId, expiresAt: data.expiresAt ?? data.expires_at };
 }
 
 /** Streams a media body straight to the Outstand upload URL without buffering it. */
@@ -110,24 +133,30 @@ export async function confirmUpload(providerMediaId: string): Promise<void> {
 }
 
 export async function createPost(input: {
-  providerMediaId: string;
-  postType: string;
+  providerMediaIds: string[];
   caption?: string;
   idempotencyKey: string;
 }): Promise<{ providerPostId: string }> {
-  if (!ALLOWED_POST_TYPES.has(input.postType)) {
-    throw new OutstandError(`Unsupported post type "${input.postType}".`);
-  }
+  // Body shape matches Outstand's published POST /v1/posts example:
+  //   { containers: [{ content, mediaIds }], socialAccountIds: [...] }
+  // NOTE: how a Story (vs a feed post) is flagged is not yet confirmed against
+  // the docs — see README. If Outstand needs an explicit type field, add it to
+  // the container here.
   const data = await postJson(
     "/v1/posts",
     {
-      media_id: input.providerMediaId,
-      post_type: input.postType,
-      ...(input.caption ? { caption: input.caption } : {}),
+      containers: [{ content: input.caption ?? "", mediaIds: input.providerMediaIds }],
+      socialAccountIds: getSocialAccountIds(),
     },
     { "Idempotency-Key": input.idempotencyKey },
   );
-  return { providerPostId: data.post_id };
+  const providerPostId = data.id ?? data.postId ?? data.post_id;
+  if (!providerPostId) {
+    throw new OutstandError("Outstand create-post response missing post id.", {
+      body: JSON.stringify(data).slice(0, 500),
+    });
+  }
+  return { providerPostId };
 }
 
 /**

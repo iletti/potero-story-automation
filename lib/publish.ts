@@ -121,8 +121,7 @@ export async function publishNextStory(now: Date = new Date()): Promise<PublishR
       await confirmUpload(upload.providerMediaId);
 
       const post = await createPost({
-        providerMediaId: upload.providerMediaId,
-        postType: settings.postType,
+        providerMediaIds: [upload.providerMediaId],
         idempotencyKey: logId,
       });
 

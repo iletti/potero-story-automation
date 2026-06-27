@@ -110,7 +110,10 @@ a **Google Cloud** project, and your **Outstand** API credentials.
    - `GOOGLE_SERVICE_ACCOUNT_JSON` — paste the **entire** key file from step 1.4
      (as a single value; keep the `\n` inside `private_key` intact).
    - `GOOGLE_DRIVE_FOLDER_ID` — from step 1.7.
-   - `OUTSTAND_API_BASE_URL`, `OUTSTAND_API_KEY` — your Outstand credentials.
+   - `OUTSTAND_API_BASE_URL` (`https://api.outstand.so`), `OUTSTAND_API_KEY` —
+     your Outstand credentials.
+   - `OUTSTAND_SOCIAL_ACCOUNT_IDS` — the connected account(s) to post to
+     (comma-separated). Required — publishing fails without it.
    - `OUTSTAND_WEBHOOK_SECRET` — only if you use the optional webhook (below).
 4. Deploy.
 
@@ -140,6 +143,24 @@ That's it — from now on you only touch the Drive folder.
 - **Drive folder** — every file with its state (active / rejected + reason /
   disabled / removed) and last-posted time. Disable/enable individual files.
 - **Recent posts** — outcome of each publish attempt.
+
+## Outstand API compatibility (please confirm)
+
+The Outstand client (`lib/outstand.ts`) follows Outstand's published example for
+`POST /v1/posts`: `{ containers: [{ content, mediaIds }], socialAccountIds }`
+with `Authorization: Bearer`. Three things could not be confirmed against the
+full docs and are worth a 2-minute check before relying on it:
+
+1. **Media upload fields** — the get-upload-URL request/response key names. The
+   client sends both camelCase + snake_case and reads the response leniently, so
+   it should work either way, but confirm the endpoint path/shape.
+2. **Story flag** — how Outstand marks a post as a *Story* (vs a feed post). If
+   it needs an explicit field, add it to the container in `createPost`.
+3. **Webhook payload** — the optional webhook parses `postId` / `outcome`;
+   confirm against Outstand's webhook docs.
+
+The first live **Publish next now** surfaces any mismatch as the error text on
+the "Recent posts" row, which makes these quick to pin down.
 
 ## Optional: delivery webhook
 
