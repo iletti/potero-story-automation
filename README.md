@@ -7,6 +7,20 @@ Drive folder as the only thing you manage**. Drop a video or image in the folder
 One Next.js app on Vercel + one Postgres database. No queues, no workers, no
 upload UI, no file storage to manage — Drive is the content store.
 
+## Current production
+
+- App: <https://potero-story-automation.vercel.app>
+- Drive folder id: `15H2jnp-Jmg123_KNsUdhIjj-aYU5T6K8`
+- Outstand base URL: `https://api.outstand.so`
+- Instagram Story target: `poterostandard` (`NZOJa` in Outstand)
+- Database: Vercel-connected Neon Postgres; `DATABASE_URL` is injected by the
+  integration.
+- Verified live Story smoke test: Outstand post `AJb27` published with one media
+  item and is confirmed in `post_log`.
+
+Do not commit or print secret-bearing local files: `.env.local`, `.vercel/`,
+`sa.json`, or `.cron-secret.current`.
+
 ## How it works
 
 ```
@@ -76,6 +90,10 @@ needed to reject a bad file.
   dashboard; re-enable with one click).
 - **No double-posting** — files are claimed atomically, so overlapping runs or a
   manual "Publish now" during a cron can't post the same file twice.
+- **Delivery reconciliation** — Outstand may accept a post before Instagram
+  finishes processing it. Recent accepted posts are reconciled to `confirmed` or
+  `failed` on dashboard and publish runs, so downstream Instagram failures do
+  not remain marked as successful.
 
 ---
 
@@ -146,7 +164,7 @@ That's it — from now on you only touch the Drive folder.
   disabled / removed) and last-posted time. Disable/enable individual files.
 - **Recent posts** — outcome of each publish attempt.
 
-## Outstand API mapping (verified against the docs)
+## Outstand API mapping (verified in production)
 
 `lib/outstand.ts` implements the documented Outstand flow:
 
@@ -161,8 +179,27 @@ Auth is `Authorization: Bearer <OUTSTAND_API_KEY>`. A Story is published by
 setting `instagram.publishAsStory = true` (controlled by `OUTSTAND_PUBLISH_AS_STORY`).
 For captionless Stories the app sends a single-space `content` value because
 Outstand requires a non-empty string.
+Important: post creation must use the confirmed media `url` and `filename`.
+Sending only the uploaded media id creates a post with no attached media, and
+Instagram rejects it.
 The optional webhook verifies the `X-Outstand-Signature` HMAC-SHA256 header and
 reacts to `post.published` / `post.error` events (`data.postId`).
+
+## Production checks
+
+Run these without printing secret values:
+
+| Check | Expected |
+|---|---|
+| `vercel inspect https://potero-story-automation.vercel.app` | latest production deployment is `Ready` |
+| unauthenticated `GET /` | `401` |
+| authenticated `GET /` | `200` |
+| unauthenticated `POST /api/cron/sync` | `401` |
+| authorized `POST /api/cron/sync` | `{"status":"ok","active":N,"rejected":N,"removed":N,"total":N}` |
+| recent Vercel `500` logs | none |
+
+Routine production reviews should not call
+`/api/cron/publish?force=1` unless another real Story is intended.
 
 ## Optional: delivery webhook
 

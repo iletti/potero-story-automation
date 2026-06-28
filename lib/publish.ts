@@ -84,11 +84,19 @@ export async function syncOutstandPostStatuses(): Promise<void> {
   `) as Array<{ id: string; media_id: string | null; provider_post_id: string }>;
 
   for (const row of rows) {
-    const status = await getPostStatus(row.provider_post_id);
-    if (status.status === "published") {
-      await sql`update post_log set status = 'confirmed' where id = ${row.id}`;
-    } else if (status.status === "failed") {
-      await markDeliveryFailed(row.id, row.media_id, status.error);
+    try {
+      const status = await getPostStatus(row.provider_post_id);
+      if (status.status === "published") {
+        await sql`update post_log set status = 'confirmed' where id = ${row.id}`;
+      } else if (status.status === "failed") {
+        await markDeliveryFailed(row.id, row.media_id, status.error);
+      }
+    } catch (err) {
+      console.warn(
+        `Unable to reconcile Outstand post ${row.provider_post_id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
     }
   }
 }
