@@ -155,7 +155,7 @@ That's it — from now on you only touch the Drive folder.
 | Get upload URL | `POST /v1/media/upload` `{ filename, content_type }` → `data.upload_url`, `data.id` |
 | Upload bytes | `PUT <upload_url>` (streamed from Drive) |
 | Confirm | `POST /v1/media/{id}/confirm` `{ size }` |
-| Publish | `POST /v1/posts/` `{ containers:[{ mediaIds, content }], accounts, instagram:{ publishAsStory } }` → `post.id` |
+| Publish | `POST /v1/posts/` `{ containers:[{ media:[{ url, filename }], content }], accounts, instagram:{ publishAsStory } }` → `post.id` |
 
 Auth is `Authorization: Bearer <OUTSTAND_API_KEY>`. A Story is published by
 setting `instagram.publishAsStory = true` (controlled by `OUTSTAND_PUBLISH_AS_STORY`).

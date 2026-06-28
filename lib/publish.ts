@@ -2,7 +2,7 @@ import { getSql } from "./db";
 import { getSettings } from "./settings";
 import { dailyTarget, pacedAllowance } from "./schedule";
 import { downloadStream } from "./google-drive";
-import { confirmUpload, createPost, requestUploadUrl, uploadMedia, OutstandError } from "./outstand";
+import { confirmUpload, createPost, getPostStatus, requestUploadUrl, uploadMedia, OutstandError } from "./outstand";
 
 const MAX_PUBLISH_ATTEMPTS = 3; // try a few candidates per run so one bad file can't waste the slot
 const FAIL_LIMIT = 3; // disable a file after this many consecutive failures
@@ -51,6 +51,46 @@ function errorMessage(err: unknown): string {
   if (err instanceof OutstandError) return `${err.message}${err.body ? ` (${err.body})` : ""}`;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+async function markDeliveryFailed(logId: string, mediaId: string | null, message: string): Promise<void> {
+  const sql = getSql();
+  await sql`update post_log set status = 'failed', error = ${message} where id = ${logId}`;
+  if (!mediaId) return;
+  await sql`
+    update media set
+      fail_count = fail_count + 1,
+      last_error = ${message},
+      last_posted_at = null,
+      retry_after = case when fail_count + 1 >= ${FAIL_LIMIT} then null
+                         else now() + make_interval(mins => ${RETRY_BACKOFF_MIN}) end,
+      enabled = case when fail_count + 1 >= ${FAIL_LIMIT} then false else enabled end
+    where id = ${mediaId}
+  `;
+}
+
+/**
+ * Reconciles accepted Outstand posts with final delivery status. This keeps the
+ * dashboard honest even if the optional webhook has not been configured.
+ */
+export async function syncOutstandPostStatuses(): Promise<void> {
+  const sql = getSql();
+  const rows = (await sql`
+    select id, media_id, provider_post_id
+    from post_log
+    where status = 'published' and provider_post_id is not null
+    order by created_at desc
+    limit 20
+  `) as Array<{ id: string; media_id: string | null; provider_post_id: string }>;
+
+  for (const row of rows) {
+    const status = await getPostStatus(row.provider_post_id);
+    if (status.status === "published") {
+      await sql`update post_log set status = 'confirmed' where id = ${row.id}`;
+    } else if (status.status === "failed") {
+      await markDeliveryFailed(row.id, row.media_id, status.error);
+    }
+  }
 }
 
 /**
@@ -124,10 +164,10 @@ export async function publishNextStory(
 
       const body = await downloadStream(candidate.drive_file_id);
       await uploadMedia({ uploadUrl: upload.uploadUrl, body, contentType: candidate.mime_type, sizeBytes });
-      await confirmUpload(upload.providerMediaId, sizeBytes);
+      const confirmedMedia = await confirmUpload(upload.providerMediaId, sizeBytes);
 
       const post = await createPost({
-        providerMediaIds: [upload.providerMediaId],
+        media: [{ url: confirmedMedia.url, filename: confirmedMedia.filename }],
         idempotencyKey: logId,
       });
 
@@ -145,16 +185,7 @@ export async function publishNextStory(
       return { status: "published", mediaId: candidate.id, logId, providerPostId: post.providerPostId, plan };
     } catch (err) {
       const message = errorMessage(err);
-      await sql`update post_log set status = 'failed', error = ${message} where id = ${logId}`;
-      await sql`
-        update media set
-          fail_count = fail_count + 1,
-          last_error = ${message},
-          retry_after = case when fail_count + 1 >= ${FAIL_LIMIT} then null
-                             else now() + make_interval(mins => ${RETRY_BACKOFF_MIN}) end,
-          enabled = case when fail_count + 1 >= ${FAIL_LIMIT} then false else enabled end
-        where id = ${candidate.id}
-      `;
+      await markDeliveryFailed(logId, candidate.id, message);
       lastError = { mediaId: candidate.id, logId, message };
       // fall through to try the next eligible candidate this run
     }

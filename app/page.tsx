@@ -1,6 +1,6 @@
 import { getSql } from "@/lib/db";
 import { getSettings } from "@/lib/settings";
-import { getDailyPlan } from "@/lib/publish";
+import { getDailyPlan, syncOutstandPostStatuses } from "@/lib/publish";
 import { publishNow, saveSettings, syncNow, toggleMedia, togglePause } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +49,8 @@ function fmtDims(m: MediaRow): string {
 }
 
 export default async function Home() {
+  await syncOutstandPostStatuses();
+
   const sql = getSql();
   const settings = await getSettings();
   const plan = await getDailyPlan();

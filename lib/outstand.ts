@@ -76,7 +76,30 @@ async function postJson(path: string, body: unknown, extraHeaders: Record<string
   return response.json();
 }
 
+async function getJson(path: string) {
+  const { baseUrl, apiKey } = getConfig();
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}${path}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+  } catch (cause) {
+    throw new OutstandError(`Outstand request to ${path} failed before a response.`, {
+      body: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    throw new OutstandError(`Outstand ${path} returned ${response.status}.`, {
+      status: response.status,
+      body: text.slice(0, 500),
+    });
+  }
+  return response.json();
+}
+
 export type UploadUrl = { uploadUrl: string; providerMediaId: string };
+export type ConfirmedMedia = { providerMediaId: string; url: string; filename: string };
 
 /** POST /v1/media/upload — returns a presigned PUT URL (valid 1h) and the media id. */
 export async function requestUploadUrl(input: {
@@ -133,19 +156,28 @@ export async function uploadMedia(input: {
   }
 }
 
-/** POST /v1/media/{id}/confirm — marks the uploaded file active. */
-export async function confirmUpload(providerMediaId: string, sizeBytes: number): Promise<void> {
-  await postJson(`/v1/media/${encodeURIComponent(providerMediaId)}/confirm`, { size: sizeBytes });
+/** POST /v1/media/{id}/confirm — marks the uploaded file active and returns its public URL. */
+export async function confirmUpload(providerMediaId: string, sizeBytes: number): Promise<ConfirmedMedia> {
+  const json = await postJson(`/v1/media/${encodeURIComponent(providerMediaId)}/confirm`, { size: sizeBytes });
+  const data = json?.data ?? json?.media ?? {};
+  const url = data.url;
+  const filename = data.filename;
+  if (!url || !filename) {
+    throw new OutstandError("Outstand confirm response missing data.url / data.filename.", {
+      body: JSON.stringify(json).slice(0, 500),
+    });
+  }
+  return { providerMediaId, url: String(url), filename: String(filename) };
 }
 
 /** POST /v1/posts/ — publishes the media immediately to the configured accounts. */
 export async function createPost(input: {
-  providerMediaIds: string[];
+  media: Array<{ url: string; filename: string }>;
   caption?: string;
   idempotencyKey: string;
 }): Promise<{ providerPostId: string }> {
   const container: Record<string, unknown> = {
-    mediaIds: input.providerMediaIds,
+    media: input.media,
     // Outstand requires non-empty `content` even for captionless Stories.
     // A single space keeps the Story effectively captionless.
     content: input.caption ?? " ",
@@ -168,6 +200,32 @@ export async function createPost(input: {
     });
   }
   return { providerPostId: String(providerPostId) };
+}
+
+export type ProviderPostStatus =
+  | { status: "pending" }
+  | { status: "published"; platformPostId: string | null; publishedAt: string | null }
+  | { status: "failed"; error: string };
+
+export async function getPostStatus(providerPostId: string): Promise<ProviderPostStatus> {
+  const json = await getJson(`/v1/posts/${encodeURIComponent(providerPostId)}`);
+  const post = json?.post ?? {};
+  const accounts = Array.isArray(post.socialAccounts) ? post.socialAccounts : [];
+  const failed = accounts.find((account: { status?: unknown }) => account.status === "failed");
+  if (failed) {
+    const error = typeof failed.error === "string" ? failed.error : "Outstand reported account publish failure.";
+    return { status: "failed", error };
+  }
+
+  const pending = accounts.find((account: { status?: unknown }) => account.status === "pending");
+  if (pending || !post.publishedAt) return { status: "pending" };
+
+  const published = accounts.find((account: { status?: unknown }) => account.status === "published") ?? {};
+  return {
+    status: "published",
+    platformPostId: typeof published.platformPostId === "string" ? published.platformPostId : null,
+    publishedAt: typeof published.publishedAt === "string" ? published.publishedAt : typeof post.publishedAt === "string" ? post.publishedAt : null,
+  };
 }
 
 export type OutstandWebhook = { event: string; postId: string | null; error: string | null };

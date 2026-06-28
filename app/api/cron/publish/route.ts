@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { publishNextStory } from "@/lib/publish";
+import { publishNextStory, syncOutstandPostStatuses } from "@/lib/publish";
 
 export const runtime = "nodejs";
 export const maxDuration = 300; // streaming large videos Drive -> Outstand
@@ -15,6 +15,7 @@ async function run(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
+  await syncOutstandPostStatuses();
   // ?force=1 bypasses pacing/pause for a manual smoke test (still CRON_SECRET-gated).
   const force = new URL(req.url).searchParams.get("force") === "1";
   const result = await publishNextStory(new Date(), { force });
