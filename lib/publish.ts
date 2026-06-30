@@ -2,7 +2,15 @@ import { getSql } from "./db";
 import { getSettings } from "./settings";
 import { dailyTarget, pacedAllowance } from "./schedule";
 import { downloadStream } from "./google-drive";
-import { confirmUpload, createPost, getPostStatus, requestUploadUrl, uploadMedia, OutstandError } from "./outstand";
+import {
+  confirmUpload,
+  createPost,
+  getPostStatus,
+  isOutstandConfigurationError,
+  requestUploadUrl,
+  uploadMedia,
+  OutstandError,
+} from "./outstand";
 
 const MAX_PUBLISH_ATTEMPTS = 3; // try a few candidates per run so one bad file can't waste the slot
 const FAIL_LIMIT = 3; // disable a file after this many consecutive failures
@@ -67,6 +75,12 @@ async function markDeliveryFailed(logId: string, mediaId: string | null, message
       enabled = case when fail_count + 1 >= ${FAIL_LIMIT} then false else enabled end
     where id = ${mediaId}
   `;
+}
+
+async function markPublishConfigurationFailed(logId: string, mediaId: string, message: string): Promise<void> {
+  const sql = getSql();
+  await sql`update post_log set status = 'failed', error = ${message} where id = ${logId}`;
+  await sql`update media set retry_after = null where id = ${mediaId}`;
 }
 
 /**
@@ -193,6 +207,10 @@ export async function publishNextStory(
       return { status: "published", mediaId: candidate.id, logId, providerPostId: post.providerPostId, plan };
     } catch (err) {
       const message = errorMessage(err);
+      if (isOutstandConfigurationError(err)) {
+        await markPublishConfigurationFailed(logId, candidate.id, message);
+        return { status: "failed", mediaId: candidate.id, logId, error: message, plan };
+      }
       await markDeliveryFailed(logId, candidate.id, message);
       lastError = { mediaId: candidate.id, logId, message };
       // fall through to try the next eligible candidate this run

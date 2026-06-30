@@ -1,4 +1,5 @@
 import { getSql } from "@/lib/db";
+import { getStoryChannels } from "@/lib/outstand";
 import { getSettings } from "@/lib/settings";
 import { getDailyPlan, syncOutstandPostStatuses } from "@/lib/publish";
 import { publishNow, saveSettings, syncNow, toggleMedia, togglePause } from "./actions";
@@ -48,6 +49,16 @@ function fmtDims(m: MediaRow): string {
   return parts.join(" · ") || "—";
 }
 
+function storyChannelLabel(): string {
+  try {
+    const channels = getStoryChannels();
+    if (channels.length === 0) return "feed post";
+    return channels.map((channel) => channel[0].toUpperCase() + channel.slice(1)).join(" + ");
+  } catch {
+    return "not configured";
+  }
+}
+
 export default async function Home() {
   await syncOutstandPostStatuses();
 
@@ -78,12 +89,13 @@ export default async function Home() {
     removed: media.filter((m) => m.status === "removed").length,
   };
   const cooldownDays = Math.round(settings.minReuseHours / 24);
+  const channels = storyChannelLabel();
 
   return (
     <main>
       <div className="row spread">
         <h1>Potero Story Automation</h1>
-        <span className="muted">Drive folder → Outstand</span>
+        <span className="muted">Drive folder → Outstand → {channels}</span>
       </div>
 
       <div className={`banner ${settings.paused ? "paused" : "live"}`} style={{ marginTop: 16 }}>
@@ -96,6 +108,7 @@ export default async function Home() {
         <Stat label="In rotation" value={String(counts.active)} />
         <Stat label="Today's target" value={String(plan.target)} />
         <Stat label="Posted today" value={String(plan.postedToday)} />
+        <Stat label="Channels" value={channels} />
         <Stat label="Cooldown" value={`${cooldownDays}d`} />
         <Stat label="Last sync" value={settings.lastSyncedAt ? fmtDate(settings.lastSyncedAt) : "never"} />
       </div>

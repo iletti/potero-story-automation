@@ -4,7 +4,7 @@ import { createHmac, timingSafeEqual } from "crypto";
  * Outstand API client (https://api.outstand.so). Verified against the Outstand
  * docs: request an upload URL, PUT the bytes, confirm, then create the post.
  *   - Media:  POST /v1/media/upload  -> PUT upload_url -> POST /v1/media/{id}/confirm
- *   - Post:   POST /v1/posts/  { containers, accounts, instagram }
+ *   - Post:   POST /v1/posts/  { containers, accounts, <platform overrides> }
  */
 
 export class OutstandError extends Error {
@@ -18,6 +18,16 @@ export class OutstandError extends Error {
   }
 }
 
+export function isOutstandConfigurationError(err: unknown): boolean {
+  if (!(err instanceof OutstandError)) return false;
+  if (err.status === 401 || err.status === 403) return true;
+  return (
+    err.message.startsWith("OUTSTAND_") ||
+    err.message.includes("story override is configured") ||
+    err.message.includes("OUTSTAND_STORY_CONFIG_JSON")
+  );
+}
+
 function getConfig(): { baseUrl: string; apiKey: string } {
   const baseUrl = process.env.OUTSTAND_API_BASE_URL;
   const apiKey = process.env.OUTSTAND_API_KEY;
@@ -26,26 +36,175 @@ function getConfig(): { baseUrl: string; apiKey: string } {
   return { baseUrl: baseUrl.replace(/\/+$/, ""), apiKey };
 }
 
-/**
- * The connected account(s) to publish to (comma-separated env). Each value may
- * be a network name (e.g. "instagram"), a username, or an account id — Outstand
- * resolves it against the org's connected accounts.
- */
-export function getAccounts(): string[] {
-  const raw = process.env.OUTSTAND_ACCOUNTS ?? process.env.OUTSTAND_SOCIAL_ACCOUNT_IDS ?? "";
-  const accounts = raw
+const DEFAULT_STORY_CHANNEL = "instagram";
+const BUILT_IN_STORY_OVERRIDES: Record<string, Record<string, unknown>> = {
+  instagram: { publishAsStory: true },
+  facebook: { publishAsStory: true },
+};
+const KNOWN_CHANNELS = new Set([
+  "facebook",
+  "instagram",
+  "linkedin",
+  "pinterest",
+  "threads",
+  "tiktok",
+  "twitter",
+  "x",
+  "youtube",
+]);
+
+function splitEnvList(raw: string): string[] {
+  return raw
     .split(/[,\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function channelName(value: string, extraChannels: Set<string> = new Set()): string | null {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  const [prefix] = normalized.split(":", 1);
+  if (KNOWN_CHANNELS.has(prefix) || extraChannels.has(prefix)) return prefix;
+  if (KNOWN_CHANNELS.has(normalized) || extraChannels.has(normalized)) return normalized;
+  return null;
+}
+
+function customStoryChannelNames(): Set<string> {
+  const raw = process.env.OUTSTAND_STORY_CONFIG_JSON;
+  if (!raw) return new Set();
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return new Set();
+    return new Set(
+      Object.keys(parsed)
+        .map((key) => key.trim().toLowerCase())
+        .filter(Boolean),
+    );
+  } catch {
+    return new Set();
+  }
+}
+
+function parseAccountSelector(
+  value: string,
+  extraChannels: Set<string> = customStoryChannelNames(),
+): { account: string; channel: string | null } | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const colon = trimmed.indexOf(":");
+  if (colon > 0) {
+    const maybeChannel = channelName(trimmed.slice(0, colon), extraChannels);
+    const account = trimmed.slice(colon + 1).trim();
+    if (maybeChannel && account) return { account, channel: maybeChannel };
+  }
+
+  return { account: trimmed, channel: channelName(trimmed, extraChannels) };
+}
+
+function getConfiguredAccountSelectors(): Array<{ account: string; channel: string | null }> {
+  const raw = process.env.OUTSTAND_ACCOUNTS ?? process.env.OUTSTAND_SOCIAL_ACCOUNT_IDS ?? "";
+  const extraChannels = customStoryChannelNames();
+  const accounts = splitEnvList(raw)
+    .map((value) => parseAccountSelector(value, extraChannels))
+    .filter((value): value is { account: string; channel: string | null } => Boolean(value));
   if (accounts.length === 0) {
     throw new OutstandError("OUTSTAND_ACCOUNTS is not set (the account(s) to post to).");
   }
   return accounts;
 }
 
-/** Whether to publish as an Instagram Story (default true). */
+/**
+ * The connected account(s) to publish to (comma-separated env). Each value may
+ * be a network name (e.g. "instagram"), a username, or an account id. Prefix an
+ * opaque selector with `network:` (e.g. `facebook:abc123`) to infer the story
+ * channel while sending only `abc123` to Outstand.
+ */
+export function getAccounts(): string[] {
+  return getConfiguredAccountSelectors().map((selector) => selector.account);
+}
+
+/** Whether to publish as story-type content (default true). */
 function publishAsStory(): boolean {
   return (process.env.OUTSTAND_PUBLISH_AS_STORY ?? "true").toLowerCase() !== "false";
+}
+
+function configuredStoryChannels(accounts: string[]): string[] {
+  const raw = process.env.OUTSTAND_STORY_CHANNELS;
+  const extraChannels = customStoryChannelNames();
+  const channels = raw
+    ? splitEnvList(raw)
+        .map((value) => channelName(value, extraChannels) ?? value.trim().toLowerCase())
+        .filter(Boolean)
+    : getConfiguredAccountSelectors()
+        .filter((selector) => accounts.includes(selector.account))
+        .map((selector) => selector.channel)
+        .filter((value): value is string => Boolean(value));
+
+  const unique = Array.from(new Set(channels));
+  return unique.length > 0 ? unique : [DEFAULT_STORY_CHANNEL];
+}
+
+function configuredStoryOverrides(): Record<string, Record<string, unknown>> {
+  const raw = process.env.OUTSTAND_STORY_CONFIG_JSON;
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("expected a JSON object");
+    }
+
+    const overrides: Record<string, Record<string, unknown>> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      const channel = channelName(key) ?? key.trim().toLowerCase();
+      if (!channel) continue;
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error(`expected ${key} to be a JSON object`);
+      }
+      overrides[channel] = value as Record<string, unknown>;
+    }
+    return overrides;
+  } catch (cause) {
+    throw new OutstandError("OUTSTAND_STORY_CONFIG_JSON must be a JSON object of channel overrides.", {
+      body: cause instanceof Error ? cause.message : String(cause),
+    });
+  }
+}
+
+export function getStoryChannels(): string[] {
+  if (!publishAsStory()) return [];
+  return Object.keys(getStoryPlatformOverrides(getAccounts()));
+}
+
+export function getStoryPlatformOverrides(accounts: string[] = getAccounts()): Record<string, Record<string, unknown>> {
+  if (!publishAsStory()) return {};
+
+  const customOverrides = configuredStoryOverrides();
+  const overrides: Record<string, Record<string, unknown>> = {};
+  for (const channel of configuredStoryChannels(accounts)) {
+    const override = customOverrides[channel] ?? BUILT_IN_STORY_OVERRIDES[channel];
+    if (!override) {
+      throw new OutstandError(
+        `No story override is configured for "${channel}". Add it to OUTSTAND_STORY_CONFIG_JSON.`,
+      );
+    }
+    overrides[channel] = override;
+  }
+  for (const [channel, override] of Object.entries(customOverrides)) {
+    overrides[channel] = override;
+  }
+  return overrides;
+}
+
+export function getStoryConfigSummary(): { accountCount: number; storyChannels: string[]; publishAsStory: boolean } {
+  const accounts = getAccounts();
+  return {
+    accountCount: accounts.length,
+    storyChannels: Object.keys(getStoryPlatformOverrides(accounts)),
+    publishAsStory: publishAsStory(),
+  };
 }
 
 async function postJson(path: string, body: unknown, extraHeaders: Record<string, string> = {}) {
@@ -183,13 +342,13 @@ export async function createPost(input: {
     content: input.caption ?? " ",
   };
 
+  const accounts = getAccounts();
   const body: Record<string, unknown> = {
     containers: [container],
-    accounts: getAccounts(),
+    accounts,
   };
-  // Instagram-specific override: publish as a Story rather than a feed post.
-  if (publishAsStory()) {
-    body.instagram = { publishAsStory: true };
+  for (const [channel, override] of Object.entries(getStoryPlatformOverrides(accounts))) {
+    body[channel] = override;
   }
 
   const json = await postJson("/v1/posts/", body, { "Idempotency-Key": input.idempotencyKey });
