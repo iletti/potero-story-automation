@@ -8,6 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx scripts/migrate.ts",
+    "outstand:accounts": "tsx scripts/list-outstand-accounts.ts",
+    "outstand:story-config": "tsx scripts/validate-story-config.ts",
     "test": "vitest run"
   },
   "dependencies": {

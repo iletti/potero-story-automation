@@ -12,7 +12,9 @@ upload UI, no file storage to manage — Drive is the content store.
 - App: <https://potero-story-automation.vercel.app>
 - Drive folder id: `15H2jnp-Jmg123_KNsUdhIjj-aYU5T6K8`
 - Outstand base URL: `https://api.outstand.so`
-- Instagram Story target: `poterostandard` (`NZOJa` in Outstand)
+- Story target: Instagram `poterostandard` (`NZOJa` in Outstand). Add
+  Facebook or another story-capable channel through the Outstand channel envs
+  below.
 - Database: Vercel-connected Neon Postgres; `DATABASE_URL` is injected by the
   integration.
 - Verified live Story smoke test: Outstand post `AJb27` published with one media
@@ -88,6 +90,9 @@ needed to reject a bad file.
   and a run tries the next eligible file so a single bad file never wastes a
   slot. After 3 consecutive failures the file is auto-disabled (visible on the
   dashboard; re-enable with one click).
+- **Config errors don't burn media** — missing Outstand env, auth failures, or
+  invalid story-channel config fail the publish run without incrementing the
+  file's failure count.
 - **No double-posting** — files are claimed atomically, so overlapping runs or a
   manual "Publish now" during a cron can't post the same file twice.
 - **Delivery reconciliation** — Outstand may accept a post before Instagram
@@ -131,9 +136,23 @@ a **Google Cloud** project, and your **Outstand** API credentials.
    - `OUTSTAND_API_BASE_URL` (`https://api.outstand.so`), `OUTSTAND_API_KEY` —
      your Outstand credentials.
    - `OUTSTAND_ACCOUNTS` — account(s) to post to (comma-separated; a network name
-     like `instagram`, a username, or an account id). Required.
-   - `OUTSTAND_PUBLISH_AS_STORY` — `true` (default) posts an Instagram Story;
+     like `instagram`/`facebook`, a username, or an account id). Prefix opaque
+     selectors with the channel, for example `instagram:NZOJa,facebook:<id>`;
+     the app sends only the part after `:` to Outstand. Required.
+   - `OUTSTAND_PUBLISH_AS_STORY` — `true` (default) posts story-type content;
      `false` posts a feed post.
+   - `OUTSTAND_STORY_CHANNELS` — optional comma-separated platform override
+     names. The app infers this when `OUTSTAND_ACCOUNTS` uses platform names
+     like `instagram,facebook` or prefixed selectors like
+     `instagram:NZOJa,facebook:<id>`; set it explicitly to `instagram,facebook`
+     when `OUTSTAND_ACCOUNTS` contains unprefixed account ids and the post should
+     go to both Instagram and Facebook Stories.
+   - `OUTSTAND_STORY_CONFIG_JSON` — optional JSON object for additional
+     story-capable channels or provider-specific overrides, for example
+     `{"custom":{"publishAsStory":true}}`. Required for any
+     `OUTSTAND_STORY_CHANNELS` entry that does not have a built-in override.
+     Custom JSON keys can also be used as `OUTSTAND_ACCOUNTS` prefixes, for
+     example `custom:<id>`.
    - `OUTSTAND_WEBHOOK_SECRET` — only if you use the optional webhook (below).
 4. Deploy.
 
@@ -173,10 +192,20 @@ That's it — from now on you only touch the Drive folder.
 | Get upload URL | `POST /v1/media/upload` `{ filename, content_type }` → `data.upload_url`, `data.id` |
 | Upload bytes | `PUT <upload_url>` (streamed from Drive) |
 | Confirm | `POST /v1/media/{id}/confirm` `{ size }` |
-| Publish | `POST /v1/posts/` `{ containers:[{ media:[{ url, filename }], content }], accounts, instagram:{ publishAsStory } }` → `post.id` |
+| Publish | `POST /v1/posts/` `{ containers:[{ media:[{ url, filename }], content }], accounts, instagram:{ publishAsStory }, facebook:{ publishAsStory } }` → `post.id` |
 
-Auth is `Authorization: Bearer <OUTSTAND_API_KEY>`. A Story is published by
-setting `instagram.publishAsStory = true` (controlled by `OUTSTAND_PUBLISH_AS_STORY`).
+Auth is `Authorization: Bearer <OUTSTAND_API_KEY>`. Story publishing is enabled
+with platform-specific overrides. By default the app sends
+`instagram.publishAsStory = true` for backwards compatibility. Set
+`OUTSTAND_STORY_CHANNELS=instagram,facebook` to also send
+`facebook.publishAsStory = true`; use `OUTSTAND_STORY_CONFIG_JSON` to add or
+replace overrides for future story-capable channels without code changes. An
+unknown channel listed in `OUTSTAND_STORY_CHANNELS` must have a matching JSON
+override, otherwise publishing fails before a post is created.
+For future channels with opaque account selectors, define the JSON override and
+use the same key as an account prefix, for example
+`OUTSTAND_ACCOUNTS=custom:<id>` with
+`OUTSTAND_STORY_CONFIG_JSON={"custom":{"publishAsStory":true}}`.
 For captionless Stories the app sends a single-space `content` value because
 Outstand requires a non-empty string.
 Important: post creation must use the confirmed media `url` and `filename`.
@@ -195,11 +224,36 @@ Run these without printing secret values:
 | unauthenticated `GET /` | `401` |
 | authenticated `GET /` | `200` |
 | unauthenticated `POST /api/cron/sync` | `401` |
+| authorized `POST /api/cron/config` | `{"status":"ok","accountCount":N,"storyChannels":["instagram",...],"publishAsStory":true}` |
 | authorized `POST /api/cron/sync` | `{"status":"ok","active":N,"rejected":N,"removed":N,"total":N}` |
 | recent Vercel `500` logs | none |
 
 Routine production reviews should not call
 `/api/cron/publish?force=1` unless another real Story is intended.
+
+## Enabling Facebook Stories in production
+
+Current production already has the base Outstand env names, including
+`OUTSTAND_ACCOUNTS`, `OUTSTAND_API_BASE_URL`, `OUTSTAND_API_KEY`, and
+`OUTSTAND_PUBLISH_AS_STORY`. To turn on Facebook Stories:
+
+1. Connect the Facebook destination in Outstand and get its account selector
+   (network name, username, or account id). Run `npm run outstand:accounts` to
+   list connected account selectors from `.env.local` or shell env without
+   printing credentials.
+2. Update `OUTSTAND_ACCOUNTS` to include both selectors. Prefer
+   `instagram:<instagramSelector>,facebook:<facebookSelector>` when using account
+   ids or usernames; the app will send only the selector after `:` to Outstand.
+3. Add `OUTSTAND_STORY_CHANNELS=instagram,facebook` only when using unprefixed
+   account ids/usernames and the app cannot infer the channels.
+4. Run `npm run outstand:story-config` and confirm it reports
+   `story channels: instagram,facebook`.
+5. Deploy, then call authorized `/api/cron/config` and confirm it returns
+   `storyChannels:["instagram","facebook"]`.
+6. Open the dashboard and confirm the channel label says
+   `Instagram + Facebook`.
+7. Run `/api/cron/publish?force=1` only when a real Story should be published to
+   the configured channels.
 
 ## Optional: delivery webhook
 
