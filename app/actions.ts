@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { getSql } from "@/lib/db";
-import { setPaused, updateSettings } from "@/lib/settings";
+import { setPaused } from "@/lib/settings";
 import { publishNextStory } from "@/lib/publish";
 import { syncDrive } from "@/lib/sync";
 
@@ -24,18 +24,6 @@ export async function toggleMedia(formData: FormData): Promise<void> {
         retry_after = case when ${enabled} then null else retry_after end
     where id = ${id}
   `;
-  revalidatePath("/");
-}
-
-export async function saveSettings(formData: FormData): Promise<void> {
-  const cooldownDays = Number(formData.get("cooldownDays"));
-  const dailyMin = Number(formData.get("dailyMin"));
-  const dailyMax = Number(formData.get("dailyMax"));
-  await updateSettings({
-    minReuseHours: Math.max(1, cooldownDays) * 24,
-    dailyMin,
-    dailyMax,
-  });
   revalidatePath("/");
 }
 

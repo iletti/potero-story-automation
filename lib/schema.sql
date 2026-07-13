@@ -46,8 +46,8 @@ create index if not exists post_log_published_idx on post_log (published_at desc
 create table if not exists settings (
   id              integer primary key default 1,
   paused          boolean not null default false,
-  min_reuse_hours integer not null default 336, -- 14 days before a file may repeat
-  daily_min       integer not null default 3,
+  min_reuse_hours integer not null default 1440, -- fixed policy: 60 days
+  daily_min       integer not null default 0,
   daily_max       integer not null default 10,
   post_type       text not null default 'story',
   last_synced_at  timestamptz,

@@ -11,17 +11,16 @@ export const POST_WINDOW_END_UTC_HOUR = 21; // ~23–00 Helsinki
 /**
  * Dynamic daily target. Grows with the library and is capped so we never post
  * more than the cooldown can sustain (sustainable = pool / cooldownDays).
- * Clamped to [dailyMin, dailyMax]. With the defaults (min 3, max 10, cooldown
- * 14d): ~42 videos → 3/day, 84 → 6/day, 140+ → 10/day.
+ * There is no daily minimum. With the fixed policy (max 10, cooldown 60d),
+ * fewer than 60 files yields 0/day, 60 yields 1/day, and 600+ yields 10/day.
  */
 export function dailyTarget(
   librarySize: number,
   cooldownDays: number,
-  dailyMin: number,
   dailyMax: number,
 ): number {
   const sustainable = cooldownDays > 0 ? Math.floor(librarySize / cooldownDays) : dailyMax;
-  return Math.max(dailyMin, Math.min(dailyMax, sustainable));
+  return Math.max(0, Math.min(dailyMax, sustainable));
 }
 
 /** Fraction (0..1) of the posting window that has elapsed at `now`. */

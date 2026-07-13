@@ -1,5 +1,5 @@
 import { getSql } from "./db";
-import { getSettings } from "./settings";
+import { DAILY_MAX, getSettings } from "./settings";
 import { dailyTarget, pacedAllowance } from "./schedule";
 import { downloadStream } from "./google-drive";
 import {
@@ -46,10 +46,11 @@ export async function getDailyPlan(now: Date = new Date()): Promise<DailyPlan> {
 
   const [{ n: postedToday }] = (await sql`
     select count(*)::int as n from post_log
-    where status in ('published', 'confirmed') and published_at >= ${startOfUtcDay(now).toISOString()}
+    where provider_post_id is not null
+      and published_at >= ${startOfUtcDay(now).toISOString()}
   `) as Array<{ n: number }>;
 
-  const target = dailyTarget(librarySize, cooldownDays, settings.dailyMin, settings.dailyMax);
+  const target = dailyTarget(librarySize, cooldownDays, settings.dailyMax);
   const allowance = pacedAllowance(target, now);
 
   return { librarySize, cooldownDays, target, allowance, postedToday };
@@ -129,12 +130,13 @@ export async function publishNextStory(
   const settings = await getSettings();
   const plan = await getDailyPlan(now);
 
-  // `force` (manual "Publish next now" / ?force=1) bypasses the pause + pacing
-  // gates so an operator can post on demand. Cooldown/eligibility still apply.
+  // Manual force bypasses pause and pacing, but never the hard 10/day cap or
+  // the 60-day per-media reuse rule.
+  if (plan.postedToday >= DAILY_MAX) {
+    return { status: "skipped", reason: "hard_daily_limit_reached", plan };
+  }
   if (!opts.force) {
-    if (settings.paused) {
-      return { status: "skipped", reason: "paused", plan };
-    }
+    if (settings.paused) return { status: "skipped", reason: "paused", plan };
     if (plan.postedToday >= plan.allowance) {
       const reason = plan.postedToday >= plan.target ? "daily_target_reached" : "paced_for_now";
       return { status: "skipped", reason, plan };
@@ -149,6 +151,13 @@ export async function publishNextStory(
       from media
       where status = 'active' and enabled = true
         and (last_posted_at is null or last_posted_at < now() - make_interval(hours => ${settings.minReuseHours}))
+        and not exists (
+          select 1
+          from post_log recent
+          where recent.media_id = media.id
+            and recent.provider_post_id is not null
+            and recent.published_at >= now() - make_interval(hours => ${settings.minReuseHours})
+        )
         and (retry_after is null or retry_after < now())
       order by last_posted_at asc nulls first, created_at asc
       limit 1
