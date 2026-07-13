@@ -45,68 +45,44 @@ describe("createPost", () => {
     expect(body.instagram).toEqual({ publishAsStory: true });
   });
 
-  it("adds Facebook story overrides when Facebook is a configured story channel", async () => {
+  it("fails closed instead of turning a Facebook Story request into a Reel", async () => {
     process.env.OUTSTAND_API_BASE_URL = "https://api.outstand.test";
     process.env.OUTSTAND_API_KEY = "key";
     process.env.OUTSTAND_ACCOUNTS = "ig_account fb_account";
     process.env.OUTSTAND_STORY_CHANNELS = "instagram,facebook";
 
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ post: { id: "post_1" } }),
-    } as Response);
-
-    await createPost({
-      media: [{ url: "https://media.outstand.test/video.mp4", filename: "video.mp4" }],
-      idempotencyKey: "log_1",
-    });
-
-    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.accounts).toEqual(["ig_account", "fb_account"]);
-    expect(body.instagram).toEqual({ publishAsStory: true });
-    expect(body.facebook).toEqual({ publishAsStory: true });
+    await expect(
+      createPost({
+        media: [{ url: "https://media.outstand.test/video.mp4", filename: "video.mp4" }],
+        idempotencyKey: "log_1",
+      }),
+    ).rejects.toThrow('No story override is configured for "facebook"');
   });
 
-  it("infers story channels from network account names", async () => {
+  it("rejects unsupported story channels inferred from network names", async () => {
     process.env.OUTSTAND_API_BASE_URL = "https://api.outstand.test";
     process.env.OUTSTAND_API_KEY = "key";
     process.env.OUTSTAND_ACCOUNTS = "instagram,facebook";
 
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ post: { id: "post_1" } }),
-    } as Response);
-
-    await createPost({
-      media: [{ url: "https://media.outstand.test/video.mp4", filename: "video.mp4" }],
-      idempotencyKey: "log_1",
-    });
-
-    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.accounts).toEqual(["instagram", "facebook"]);
-    expect(body.instagram).toEqual({ publishAsStory: true });
-    expect(body.facebook).toEqual({ publishAsStory: true });
+    await expect(
+      createPost({
+        media: [{ url: "https://media.outstand.test/video.mp4", filename: "video.mp4" }],
+        idempotencyKey: "log_1",
+      }),
+    ).rejects.toThrow('No story override is configured for "facebook"');
   });
 
-  it("infers story channels from prefixed opaque account selectors", async () => {
+  it("rejects unsupported prefixed story selectors", async () => {
     process.env.OUTSTAND_API_BASE_URL = "https://api.outstand.test";
     process.env.OUTSTAND_API_KEY = "key";
     process.env.OUTSTAND_ACCOUNTS = "instagram:ig_account facebook:fb_account";
 
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
-      ok: true,
-      json: async () => ({ post: { id: "post_1" } }),
-    } as Response);
-
-    await createPost({
-      media: [{ url: "https://media.outstand.test/video.mp4", filename: "video.mp4" }],
-      idempotencyKey: "log_1",
-    });
-
-    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
-    expect(body.accounts).toEqual(["ig_account", "fb_account"]);
-    expect(body.instagram).toEqual({ publishAsStory: true });
-    expect(body.facebook).toEqual({ publishAsStory: true });
+    await expect(
+      createPost({
+        media: [{ url: "https://media.outstand.test/video.mp4", filename: "video.mp4" }],
+        idempotencyKey: "log_1",
+      }),
+    ).rejects.toThrow('No story override is configured for "facebook"');
   });
 
   it("allows custom story overrides for future story-capable channels", async () => {
@@ -151,6 +127,14 @@ describe("createPost", () => {
 
     expect(() => getStoryPlatformOverrides(["acct_1"])).toThrow(
       'No story override is configured for "custom". Add it to OUTSTAND_STORY_CONFIG_JSON.',
+    );
+  });
+
+  it("rejects TikTok because Outstand has no TikTok Story placement", () => {
+    process.env.OUTSTAND_ACCOUNTS = "tiktok:tiktok_account";
+
+    expect(() => getStoryPlatformOverrides(["tiktok_account"])).toThrow(
+      'No story override is configured for "tiktok"',
     );
   });
 
@@ -226,11 +210,11 @@ describe("isOutstandConfigurationError", () => {
 
 describe("getStoryConfigSummary", () => {
   it("summarizes account count and story channels without exposing account selectors", () => {
-    process.env.OUTSTAND_ACCOUNTS = "instagram:ig_account facebook:fb_account";
+    process.env.OUTSTAND_ACCOUNTS = "instagram:ig_account";
 
     expect(getStoryConfigSummary()).toEqual({
-      accountCount: 2,
-      storyChannels: ["instagram", "facebook"],
+      accountCount: 1,
+      storyChannels: ["instagram"],
       publishAsStory: true,
     });
   });

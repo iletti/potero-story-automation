@@ -9,11 +9,15 @@ export type Settings = {
   lastSyncedAt: string | null;
 };
 
+export const MIN_REUSE_HOURS = 60 * 24;
+export const DAILY_MIN = 0;
+export const DAILY_MAX = 10;
+
 const DEFAULTS: Settings = {
   paused: false,
-  minReuseHours: 336,
-  dailyMin: 3,
-  dailyMax: 10,
+  minReuseHours: MIN_REUSE_HOURS,
+  dailyMin: DAILY_MIN,
+  dailyMax: DAILY_MAX,
   postType: "story",
   lastSyncedAt: null,
 };
@@ -28,9 +32,12 @@ export async function getSettings(): Promise<Settings> {
   if (!row) return DEFAULTS;
   return {
     paused: Boolean(row.paused),
-    minReuseHours: Number(row.min_reuse_hours),
-    dailyMin: Number(row.daily_min),
-    dailyMax: Number(row.daily_max),
+    // These are policy invariants, not operator-tunable settings. Keeping the
+    // legacy columns readable avoids a destructive migration while enforcing
+    // the current policy immediately on every deployment.
+    minReuseHours: MIN_REUSE_HOURS,
+    dailyMin: DAILY_MIN,
+    dailyMax: DAILY_MAX,
     postType: String(row.post_type),
     lastSyncedAt: row.last_synced_at ? String(row.last_synced_at) : null,
   };
@@ -39,22 +46,6 @@ export async function getSettings(): Promise<Settings> {
 export async function setPaused(paused: boolean): Promise<void> {
   const sql = getSql();
   await sql`update settings set paused = ${paused}, updated_at = now() where id = 1`;
-}
-
-export async function updateSettings(input: {
-  minReuseHours: number;
-  dailyMin: number;
-  dailyMax: number;
-}): Promise<void> {
-  const sql = getSql();
-  const reuse = Math.max(1, Math.round(input.minReuseHours));
-  const min = Math.max(0, Math.round(input.dailyMin));
-  const max = Math.max(min, Math.round(input.dailyMax));
-  await sql`
-    update settings
-    set min_reuse_hours = ${reuse}, daily_min = ${min}, daily_max = ${max}, updated_at = now()
-    where id = 1
-  `;
 }
 
 export async function markSynced(): Promise<void> {

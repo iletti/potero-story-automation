@@ -2,24 +2,23 @@ import { describe, expect, it } from "vitest";
 import { dailyTarget, pacedAllowance, windowFractionElapsed } from "../lib/schedule";
 
 describe("dailyTarget", () => {
-  const min = 3;
   const max = 10;
-  const cooldown = 14;
+  const cooldown = 60;
 
-  it("never drops below the daily minimum, even with an empty pool", () => {
-    expect(dailyTarget(0, cooldown, min, max)).toBe(3);
-    expect(dailyTarget(20, cooldown, min, max)).toBe(3);
+  it("has no daily minimum", () => {
+    expect(dailyTarget(0, cooldown, max)).toBe(0);
+    expect(dailyTarget(59, cooldown, max)).toBe(0);
   });
 
   it("grows with the pool (pool ÷ cooldown days)", () => {
-    expect(dailyTarget(42, cooldown, min, max)).toBe(3); // floor(42/14)=3
-    expect(dailyTarget(84, cooldown, min, max)).toBe(6);
-    expect(dailyTarget(112, cooldown, min, max)).toBe(8);
+    expect(dailyTarget(60, cooldown, max)).toBe(1);
+    expect(dailyTarget(300, cooldown, max)).toBe(5);
+    expect(dailyTarget(540, cooldown, max)).toBe(9);
   });
 
   it("caps at the daily maximum", () => {
-    expect(dailyTarget(140, cooldown, min, max)).toBe(10);
-    expect(dailyTarget(1000, cooldown, min, max)).toBe(10);
+    expect(dailyTarget(600, cooldown, max)).toBe(10);
+    expect(dailyTarget(1000, cooldown, max)).toBe(10);
   });
 });
 

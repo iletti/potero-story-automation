@@ -2,7 +2,7 @@ import { getSql } from "@/lib/db";
 import { getStoryChannels } from "@/lib/outstand";
 import { getSettings } from "@/lib/settings";
 import { getDailyPlan, syncOutstandPostStatuses } from "@/lib/publish";
-import { publishNow, saveSettings, syncNow, toggleMedia, togglePause } from "./actions";
+import { publishNow, syncNow, toggleMedia, togglePause } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -127,19 +127,13 @@ export default async function Home() {
       </div>
 
       <h2>Settings</h2>
-      <form className="panel" action={saveSettings}>
-        <div className="row" style={{ gap: 20, alignItems: "flex-end" }}>
-          <Field label="Reuse cooldown (days)" name="cooldownDays" value={cooldownDays} />
-          <Field label="Min / day" name="dailyMin" value={settings.dailyMin} />
-          <Field label="Max / day" name="dailyMax" value={settings.dailyMax} />
-          <button type="submit" className="primary">Save</button>
-        </div>
+      <div className="panel">
         <p className="muted" style={{ margin: "12px 0 0" }}>
-          Daily volume grows with the pool: roughly{" "}
-          <code>min({settings.dailyMax}, pool ÷ {cooldownDays} days)</code>, never below {settings.dailyMin}.
-          To sustain {settings.dailyMax}/day you need ~{settings.dailyMax * cooldownDays} videos in the folder.
+          Daily volume grows automatically with the Drive pool:{" "}
+          <code>min(10, floor(pool ÷ 60 days))</code>. There is no daily minimum, every accepted
+          Story is blocked from reuse for at least 60 days, and the hard limit is 10 Stories/day.
         </p>
-      </form>
+      </div>
 
       <h2>Drive folder ({counts.active} active · {counts.rejected} rejected · {counts.removed} removed)</h2>
       <div className="panel">
@@ -240,15 +234,6 @@ function Stat({ label, value }: { label: string; value: string }) {
         {label}
       </div>
     </div>
-  );
-}
-
-function Field({ label, name, value }: { label: string; name: string; value: number }) {
-  return (
-    <label style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: 13 }} className="muted">
-      {label}
-      <input type="text" inputMode="numeric" name={name} defaultValue={value} style={{ width: 90 }} />
-    </label>
   );
 }
 

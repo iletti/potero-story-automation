@@ -6,9 +6,9 @@ This is a single-tenant Next.js App Router app deployed on Vercel:
 
 - Production app: `https://potero-story-automation.vercel.app`
 - Content source: Google Drive folder mirrored into Postgres.
-- Publishing provider: Outstand API, publishing story-type content. Instagram
-  Stories remain the default; Facebook Stories and future story-capable channels
-  are configured through Outstand channel envs.
+- Publishing provider: Outstand API. Instagram Stories are the only currently
+  verified Story placement. Facebook and TikTok are excluded until Outstand
+  documents a true Story-only payload for those networks.
 - Database: Vercel-connected Neon Postgres. Do not set `DATABASE_URL` manually in Vercel; the storage integration owns it.
 - Admin UI: `/`, protected by HTTP Basic Auth.
 - Cron routes: `/api/cron/sync`, `/api/cron/publish`, and `/api/cron/config`,
@@ -45,11 +45,10 @@ Known non-secret values:
 - `OUTSTAND_API_BASE_URL=https://api.outstand.so`
 - `OUTSTAND_PUBLISH_AS_STORY=true`
 - The active Instagram account is `poterostandard` on Outstand account id `NZOJa`.
-- The active Facebook Page is `Potero Standard` on Outstand account id `HTPQ5`.
-- Current multi-channel selector:
-  `OUTSTAND_ACCOUNTS=instagram:NZOJa,facebook:HTPQ5`.
-- `OUTSTAND_STORY_CHANNELS` is not needed with these prefixed selectors. Set
-  `OUTSTAND_STORY_CHANNELS=instagram,facebook` only for unprefixed ids.
+- The connected Facebook Page is `Potero Standard` on Outstand account id
+  `HTPQ5`, but it is not a publish target because video delivery became a Reel.
+- Current selector: `OUTSTAND_ACCOUNTS=instagram:NZOJa`.
+- `OUTSTAND_STORY_CHANNELS` is not needed with the prefixed Instagram selector.
 
 ## Local environment
 
@@ -62,7 +61,7 @@ Known non-secret values:
 - Current safe local defaults are:
   `GOOGLE_DRIVE_FOLDER_ID=15H2jnp-Jmg123_KNsUdhIjj-aYU5T6K8`,
   `OUTSTAND_API_BASE_URL=https://api.outstand.so`,
-  `OUTSTAND_ACCOUNTS=instagram:NZOJa,facebook:HTPQ5`,
+  `OUTSTAND_ACCOUNTS=instagram:NZOJa`,
   `OUTSTAND_PUBLISH_AS_STORY=true`.
 - Secret values still need to come from the operator, Vercel runtime, or an
   already-provisioned ignored local file: `ADMIN_PASSWORD`, `CRON_SECRET`,
@@ -139,14 +138,19 @@ secret values.
 
 ## Implementation notes
 
-- The Outstand publish payload must use confirmed media URL objects and
-  platform-specific story overrides:
+- The Outstand publish payload must use confirmed media URL objects and the
+  verified Instagram Story override:
   `containers:[{ media:[{ url, filename }], content:" " }]` plus
-  `instagram:{ publishAsStory:true }` / `facebook:{ publishAsStory:true }`.
+  `instagram:{ publishAsStory:true }`.
 - Do not send only Outstand media ids in the post payload; that creates a post with no attached media and Instagram rejects it.
 - Captionless Stories still need non-empty `content`; the app sends a single space.
 - `post_log.status='published'` means Outstand accepted the post. The app then reconciles it to `confirmed` or `failed` using Outstand post status, with the optional webhook as another confirmation path.
 - If Outstand reports delivery failure, the media is put back into retry handling. After three consecutive failures the media is disabled.
+- Story cadence is fixed policy: at least 60 days between accepted attempts for
+  the same media, no daily minimum, automatic `floor(active pool / 60)` ramping,
+  and a hard maximum of 10 accepted provider posts per UTC day. Manual force
+  mode may bypass pacing/pause but not the 60-day or 10/day safety limits.
+- New valid Drive files become active automatically on the next 30-minute sync.
 
 ## Future expansion facts
 
@@ -158,15 +162,15 @@ will matter for future expansion:
   Outstand post targeting all selectors in `OUTSTAND_ACCOUNTS`.
 - Current content scope is one Google Drive folder mirrored into one `media`
   pool. There is no per-account content partitioning yet.
-- Current settings are global: pause, cooldown, daily min/max, and post type
-  apply to all configured accounts together.
+- Current settings are global. Pause is operator-controlled; reuse and daily
+  volume are fixed by the policy above.
 - Current `post_log` records one provider post id per publish attempt. If future
   requirements need per-network delivery accounting, model provider account or
   channel status explicitly instead of overloading the current status field.
 - Prefixed selectors are the preferred expansion shape:
   `channel:outstandSelector`. The app sends only `outstandSelector` to Outstand
   and uses `channel` to infer story overrides.
-- Built-in story overrides currently exist for `instagram` and `facebook`.
+- A built-in story override currently exists only for `instagram`.
   Future story-capable channels can be added without code only when
   `OUTSTAND_STORY_CONFIG_JSON` contains the provider-specific override for that
   channel.
@@ -177,6 +181,10 @@ will matter for future expansion:
 - Before adding an account, verify whether Outstand supports Story-style
   publishing for that network. Do not assume feed, short-form video, and story
   payloads use the same override.
+- As of July 13, 2026, Outstand's documented create-post schema has no Facebook
+  or TikTok Story placement. Facebook video was observed as a Reel; TikTok
+  exposes normal video `postMode` options. Keep both out of production Story
+  selectors until the provider contract changes and is verified.
 
 ## Local commands
 

@@ -39,7 +39,6 @@ function getConfig(): { baseUrl: string; apiKey: string } {
 const DEFAULT_STORY_CHANNEL = "instagram";
 const BUILT_IN_STORY_OVERRIDES: Record<string, Record<string, unknown>> = {
   instagram: { publishAsStory: true },
-  facebook: { publishAsStory: true },
 };
 const KNOWN_CHANNELS = new Set([
   "facebook",

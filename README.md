@@ -12,8 +12,11 @@ upload UI, no file storage to manage — Drive is the content store.
 - App: <https://potero-story-automation.vercel.app>
 - Drive folder id: `15H2jnp-Jmg123_KNsUdhIjj-aYU5T6K8`
 - Outstand base URL: `https://api.outstand.so`
-- Story targets: Instagram `poterostandard` (`NZOJa` in Outstand) and Facebook
-  Page `Potero Standard` (`HTPQ5` in Outstand).
+- Story target: Instagram `poterostandard` (`NZOJa` in Outstand).
+- Facebook is intentionally not targeted: Outstand's current Facebook path
+  produced Reels and does not document a Facebook Story placement. TikTok is
+  also not targeted because Outstand documents TikTok video posts, not TikTok
+  Stories.
 - Database: Vercel-connected Neon Postgres; `DATABASE_URL` is injected by the
   integration.
 - Verified live Story smoke test before Facebook activation: Outstand post
@@ -50,29 +53,29 @@ You curate ─▶ Google Drive folder   (the only thing you touch)
 The DB never stores your media — it just tracks **what's in the folder, what's
 eligible, and when each file was last posted** (for rotation + cooldown).
 
-## Posting volume (auto-ramping 3 → 10/day)
+## Posting volume (auto-ramping 0 → 10/day)
 
 Each day's target grows with your library and is capped so you never post more
 than the cooldown can sustain:
 
 ```
-target = clamp( daily_min , daily_max , floor(pool_size ÷ cooldown_days) )
+target = min( 10 , floor(active_pool_size ÷ 60) )
 ```
 
-With the defaults (**min 3, max 10, cooldown 14 days**):
+There is no daily minimum. The reuse gap is fixed at 60 days:
 
 | Files in folder | Posts/day |
 |---:|---:|
-| up to 42 | 3 (minimum) |
-| 84 | 6 |
-| 112 | 8 |
-| 140+ | 10 (capped) |
+| 0–59 | 0 |
+| 60–119 | 1 |
+| 120–179 | 2 |
+| 300–359 | 5 |
+| 600+ | 10 (capped) |
 
-Below the level needed for the minimum, it still aims for 3/day and simply
-skips slots when nothing is eligible — add more content and it fills in. The 10
-daily publish slots are **paced evenly across the day** (≈07:00–23:00 Helsinki),
-so Stories don't all fire in the morning. All knobs are editable on the
-dashboard.
+New valid files enter the pool automatically on the next 30-minute Drive sync.
+As the pool crosses each 60-file threshold, the target rises by one Story/day,
+up to 10. The 10 publish slots are **paced across the day** (≈07:00–23:00
+Helsinki), so Stories do not all fire in the morning.
 
 ## Media rules (hard constraints)
 
@@ -94,7 +97,9 @@ needed to reject a bad file.
 ## Reliability
 
 - **Even rotation** — always posts the file that's gone longest without posting.
-- **Cooldown** — a file can't repeat until `cooldown_days` have passed.
+- **Hard 60-day reuse gap** — both `last_posted_at` and accepted Outstand
+  attempts are checked, so a missing delivery webhook cannot make a file
+  eligible early.
 - **No jammed queue** — if a file fails to publish it's retried after 30 min,
   and a run tries the next eligible file so a single bad file never wastes a
   slot. After 3 consecutive failures the file is auto-disabled (visible on the
@@ -146,18 +151,14 @@ a **Google Cloud** project, and your **Outstand** API credentials.
      your Outstand credentials.
    - `OUTSTAND_ACCOUNTS` — account(s) to post to (comma-separated; a network name
      like `instagram`/`facebook`, a username, or an account id). Prefix opaque
-     selectors with the channel, for example `instagram:NZOJa,facebook:HTPQ5`;
+     selectors with the channel, for example `instagram:NZOJa`;
      the app sends only the part after `:` to Outstand. Required. Current
-     production uses `instagram:NZOJa,facebook:HTPQ5`.
+     production uses `instagram:NZOJa`.
    - `OUTSTAND_PUBLISH_AS_STORY` — `true` (default) posts story-type content;
      `false` posts a feed post.
    - `OUTSTAND_STORY_CHANNELS` — optional comma-separated platform override
-     names. The app infers this when `OUTSTAND_ACCOUNTS` uses platform names
-     like `instagram,facebook` or prefixed selectors like
-     `instagram:NZOJa,facebook:HTPQ5`; set it explicitly to `instagram,facebook`
-     when `OUTSTAND_ACCOUNTS` contains unprefixed account ids and the post should
-     go to both Instagram and Facebook Stories. Do not set it for the current
-     prefixed production selectors.
+     names. The app infers `instagram` from the current prefixed selector, so
+     this variable is not needed in production.
    - `OUTSTAND_STORY_CONFIG_JSON` — optional JSON object for additional
      story-capable channels or provider-specific overrides, for example
      `{"custom":{"publishAsStory":true}}`. Required for any
@@ -189,7 +190,7 @@ That's it — from now on you only touch the Drive folder.
 ## Operating it (dashboard at `/`)
 
 - **Sync Drive now / Publish next now / Pause** — manual controls.
-- **Settings** — cooldown days, min/day, max/day.
+- **Settings** — displays the fixed 60-day / 0–10-per-day policy.
 - **Drive folder** — every file with its state (active / rejected + reason /
   disabled / removed) and last-posted time. Disable/enable individual files.
 - **Recent posts** — outcome of each publish attempt.
@@ -203,19 +204,13 @@ That's it — from now on you only touch the Drive folder.
 | Get upload URL | `POST /v1/media/upload` `{ filename, content_type }` → `data.upload_url`, `data.id` |
 | Upload bytes | `PUT <upload_url>` (streamed from Drive) |
 | Confirm | `POST /v1/media/{id}/confirm` `{ size }` |
-| Publish | `POST /v1/posts/` `{ containers:[{ media:[{ url, filename }], content }], accounts, instagram:{ publishAsStory }, facebook:{ publishAsStory } }` → `post.id` |
+| Publish | `POST /v1/posts/` `{ containers:[{ media:[{ url, filename }], content }], accounts, instagram:{ publishAsStory:true } }` → `post.id` |
 
 Auth is `Authorization: Bearer <OUTSTAND_API_KEY>`. Story publishing is enabled
 with platform-specific overrides. By default the app sends
-`instagram.publishAsStory = true` for backwards compatibility. With prefixed
-selectors such as `instagram:NZOJa,facebook:HTPQ5`, the app infers both story
-channels and sends both `instagram.publishAsStory = true` and
-`facebook.publishAsStory = true`. Set
-`OUTSTAND_STORY_CHANNELS=instagram,facebook` only when using unprefixed account
-ids/usernames. Use `OUTSTAND_STORY_CONFIG_JSON` to add or replace overrides for
-future story-capable channels without code changes. An unknown channel listed in
-`OUTSTAND_STORY_CHANNELS` must have a matching JSON override, otherwise
-publishing fails before a post is created.
+`instagram.publishAsStory = true`. Instagram is the only built-in Story channel.
+An unknown channel listed in `OUTSTAND_STORY_CHANNELS` must have an explicitly
+verified JSON override, otherwise publishing fails before a post is created.
 For future channels with opaque account selectors, define the JSON override and
 use the same key as an account prefix, for example
 `OUTSTAND_ACCOUNTS=custom:<id>` with
@@ -271,36 +266,22 @@ Important Vercel notes:
 - Do not put real secret values in commands that will be pasted into docs,
   commits, or final reports. Use stdin or ignored local files.
 
-## Facebook Stories in production
+## Facebook and TikTok placement limitation
 
-Current production has Facebook Stories enabled. The active selectors are:
+Current production deliberately targets Instagram Stories only:
 
 ```text
-OUTSTAND_ACCOUNTS=instagram:NZOJa,facebook:HTPQ5
+OUTSTAND_ACCOUNTS=instagram:NZOJa
 OUTSTAND_PUBLISH_AS_STORY=true
 ```
 
-`OUTSTAND_STORY_CHANNELS` is not needed for the current prefixed selectors.
-
-To change or add a story destination:
-
-1. Connect the Facebook destination in Outstand and get its account selector
-   (network name, username, or account id). Run `npm run outstand:accounts` to
-   list connected account selectors from `.env.local` or shell env without
-   printing credentials.
-2. Update `OUTSTAND_ACCOUNTS` to include both selectors. Prefer
-   `instagram:<instagramSelector>,facebook:<facebookSelector>` when using account
-   ids or usernames; the app will send only the selector after `:` to Outstand.
-3. Add `OUTSTAND_STORY_CHANNELS=instagram,facebook` only when using unprefixed
-   account ids/usernames and the app cannot infer the channels.
-4. Run `npm run outstand:story-config` and confirm it reports
-   `story channels: instagram,facebook`.
-5. Deploy, then call authorized `/api/cron/config` and confirm it returns
-   `storyChannels:["instagram","facebook"]`.
-6. Open the dashboard and confirm the channel label says
-   `Instagram + Facebook`.
-7. Run `/api/cron/publish?force=1` only when a real Story should be published to
-   the configured channels.
+As checked on July 13, 2026, Outstand documents Instagram's
+`publishAsStory` override. Its Facebook schema documents Page-post options but
+not a Story placement; video delivery was observed as a Reel. Its TikTok schema
+supports ordinary video upload modes and privacy/interaction settings, but not
+a Story placement. Facebook and TikTok must stay out of `OUTSTAND_ACCOUNTS`
+until Outstand documents and verifies true Story-only payloads. A TikTok managed
+OAuth key is not itself a connected TikTok social account.
 
 ## Future account expansion notes
 
@@ -319,7 +300,7 @@ already known so a future expansion starts from the right model:
 - Prefer prefixed selectors for any opaque Outstand id or username:
   `channel:outstandSelector`. The prefix selects the story override, and only
   the selector after `:` is sent to Outstand.
-- Built-in Story overrides exist for `instagram` and `facebook`. Future
+- A built-in Story override exists only for `instagram`. Future
   story-capable channels can be configured without code only when
   `OUTSTAND_STORY_CONFIG_JSON` defines the provider-specific override.
 - Known connected Outstand accounts from the July 1, 2026 inventory:
@@ -327,7 +308,7 @@ already known so a future expansion starts from the right model:
 | Network | Username | Outstand selector | Type | Current use |
 |---|---|---|---|---|
 | Instagram | `poterostandard` | `NZOJa` | personal | active Story target |
-| Facebook | `Potero Standard` | `HTPQ5` | page | active Story target |
+| Facebook | `Potero Standard` | `HTPQ5` | page | disabled; video became Reel |
 | Threads | `poterostandard` | `vBUEg` | personal | not configured |
 | YouTube | `@poterostandard` | `I96WX` | personal | not configured |
 | LinkedIn | `potero-standard` | `cMfKL` | organization | not configured |
@@ -352,7 +333,7 @@ Known safe defaults for local setup:
 ```bash
 GOOGLE_DRIVE_FOLDER_ID=15H2jnp-Jmg123_KNsUdhIjj-aYU5T6K8
 OUTSTAND_API_BASE_URL=https://api.outstand.so
-OUTSTAND_ACCOUNTS=instagram:NZOJa,facebook:HTPQ5
+OUTSTAND_ACCOUNTS=instagram:NZOJa
 OUTSTAND_PUBLISH_AS_STORY=true
 ```
 
@@ -363,9 +344,9 @@ already-provisioned ignored local file.
 
 Outstand can call `POST /api/webhooks/outstand` when a post finishes delivering.
 Register that URL in Outstand with your `OUTSTAND_WEBHOOK_SECRET` and the matching
-`post_log` row is updated to `confirmed` / `failed`. Delivery failures also put
-the media back into retry handling so a failed delivery does not stay on
-cooldown as if it had succeeded. The system works fine without it.
+`post_log` row is updated to `confirmed` / `failed`. Accepted provider attempts
+remain part of the 60-day reuse safety check even if delivery later fails. The
+system also reconciles delivery status without the webhook.
 
 ## Scripts
 
