@@ -12,16 +12,25 @@ upload UI, no file storage to manage — Drive is the content store.
 - App: <https://potero-story-automation.vercel.app>
 - Drive folder id: `15H2jnp-Jmg123_KNsUdhIjj-aYU5T6K8`
 - Outstand base URL: `https://api.outstand.so`
-- Story target: Instagram `poterostandard` (`NZOJa` in Outstand). Add
-  Facebook or another story-capable channel through the Outstand channel envs
-  below.
+- Story targets: Instagram `poterostandard` (`NZOJa` in Outstand) and Facebook
+  Page `Potero Standard` (`HTPQ5` in Outstand).
 - Database: Vercel-connected Neon Postgres; `DATABASE_URL` is injected by the
   integration.
-- Verified live Story smoke test: Outstand post `AJb27` published with one media
-  item and is confirmed in `post_log`.
+- Verified live Story smoke test before Facebook activation: Outstand post
+  `AJb27` published to Instagram with one media item and is confirmed in
+  `post_log`.
 
 Do not commit or print secret-bearing local files: `.env.local`, `.vercel/`,
 `sa.json`, or `.cron-secret.current`.
+
+## Documentation discipline
+
+Keep operational docs current with the system. Any change to routes, cron
+schedules, env variables, Outstand payloads, account selectors, database status
+semantics, deployment flow, or safety rules must update `README.md` and
+`AGENTS.md` in the same change. Production-only configuration changes should be
+documented in the next repo change. Use exact dates, deployment ids, commit ids,
+endpoint names, and env names when useful, but never include secret values.
 
 ## How it works
 
@@ -137,16 +146,18 @@ a **Google Cloud** project, and your **Outstand** API credentials.
      your Outstand credentials.
    - `OUTSTAND_ACCOUNTS` — account(s) to post to (comma-separated; a network name
      like `instagram`/`facebook`, a username, or an account id). Prefix opaque
-     selectors with the channel, for example `instagram:NZOJa,facebook:<id>`;
-     the app sends only the part after `:` to Outstand. Required.
+     selectors with the channel, for example `instagram:NZOJa,facebook:HTPQ5`;
+     the app sends only the part after `:` to Outstand. Required. Current
+     production uses `instagram:NZOJa,facebook:HTPQ5`.
    - `OUTSTAND_PUBLISH_AS_STORY` — `true` (default) posts story-type content;
      `false` posts a feed post.
    - `OUTSTAND_STORY_CHANNELS` — optional comma-separated platform override
      names. The app infers this when `OUTSTAND_ACCOUNTS` uses platform names
      like `instagram,facebook` or prefixed selectors like
-     `instagram:NZOJa,facebook:<id>`; set it explicitly to `instagram,facebook`
+     `instagram:NZOJa,facebook:HTPQ5`; set it explicitly to `instagram,facebook`
      when `OUTSTAND_ACCOUNTS` contains unprefixed account ids and the post should
-     go to both Instagram and Facebook Stories.
+     go to both Instagram and Facebook Stories. Do not set it for the current
+     prefixed production selectors.
    - `OUTSTAND_STORY_CONFIG_JSON` — optional JSON object for additional
      story-capable channels or provider-specific overrides, for example
      `{"custom":{"publishAsStory":true}}`. Required for any
@@ -196,12 +207,15 @@ That's it — from now on you only touch the Drive folder.
 
 Auth is `Authorization: Bearer <OUTSTAND_API_KEY>`. Story publishing is enabled
 with platform-specific overrides. By default the app sends
-`instagram.publishAsStory = true` for backwards compatibility. Set
-`OUTSTAND_STORY_CHANNELS=instagram,facebook` to also send
-`facebook.publishAsStory = true`; use `OUTSTAND_STORY_CONFIG_JSON` to add or
-replace overrides for future story-capable channels without code changes. An
-unknown channel listed in `OUTSTAND_STORY_CHANNELS` must have a matching JSON
-override, otherwise publishing fails before a post is created.
+`instagram.publishAsStory = true` for backwards compatibility. With prefixed
+selectors such as `instagram:NZOJa,facebook:HTPQ5`, the app infers both story
+channels and sends both `instagram.publishAsStory = true` and
+`facebook.publishAsStory = true`. Set
+`OUTSTAND_STORY_CHANNELS=instagram,facebook` only when using unprefixed account
+ids/usernames. Use `OUTSTAND_STORY_CONFIG_JSON` to add or replace overrides for
+future story-capable channels without code changes. An unknown channel listed in
+`OUTSTAND_STORY_CHANNELS` must have a matching JSON override, otherwise
+publishing fails before a post is created.
 For future channels with opaque account selectors, define the JSON override and
 use the same key as an account prefix, for example
 `OUTSTAND_ACCOUNTS=custom:<id>` with
@@ -231,11 +245,44 @@ Run these without printing secret values:
 Routine production reviews should not call
 `/api/cron/publish?force=1` unless another real Story is intended.
 
-## Enabling Facebook Stories in production
+## Vercel CLI quick reference
 
-Current production already has the base Outstand env names, including
-`OUTSTAND_ACCOUNTS`, `OUTSTAND_API_BASE_URL`, `OUTSTAND_API_KEY`, and
-`OUTSTAND_PUBLISH_AS_STORY`. To turn on Facebook Stories:
+Use Vercel CLI for deployment, env-name checks, alias inspection, and logs. The
+production alias is always the live target:
+`https://potero-story-automation.vercel.app`.
+
+| Task | Command |
+|---|---|
+| Inspect live deployment | `vercel inspect https://potero-story-automation.vercel.app` |
+| List production env names | `vercel env ls production` |
+| Pull local env placeholders/non-sensitive values | `vercel env pull .env.local --environment=production --yes` |
+| Check recent production errors | `vercel logs --environment production --level error --since 1h --no-follow --no-branch --expand` |
+| Deploy current checkout to production | `npx -y vercel@latest deploy --prod -y` |
+| Update a sensitive production env | `printf '%s' '<value>' \| npx -y vercel@latest env update NAME production --sensitive --yes` |
+
+Important Vercel notes:
+
+- `vercel env pull` can leave protected app secrets as placeholders. Check only
+  names or presence; never print values.
+- Production env changes require a new deployment before serverless functions
+  see the updated values.
+- Use `npx -y vercel@latest` if the globally installed `vercel` CLI cannot
+  update sensitive env vars correctly.
+- Do not put real secret values in commands that will be pasted into docs,
+  commits, or final reports. Use stdin or ignored local files.
+
+## Facebook Stories in production
+
+Current production has Facebook Stories enabled. The active selectors are:
+
+```text
+OUTSTAND_ACCOUNTS=instagram:NZOJa,facebook:HTPQ5
+OUTSTAND_PUBLISH_AS_STORY=true
+```
+
+`OUTSTAND_STORY_CHANNELS` is not needed for the current prefixed selectors.
+
+To change or add a story destination:
 
 1. Connect the Facebook destination in Outstand and get its account selector
    (network name, username, or account id). Run `npm run outstand:accounts` to
@@ -254,6 +301,63 @@ Current production already has the base Outstand env names, including
    `Instagram + Facebook`.
 7. Run `/api/cron/publish?force=1` only when a real Story should be published to
    the configured channels.
+
+## Future account expansion notes
+
+The app is not being scaled to more accounts yet. These notes preserve what is
+already known so a future expansion starts from the right model:
+
+- Today, one eligible Drive media item is selected and published as one Outstand
+  post to every selector in `OUTSTAND_ACCOUNTS`.
+- The app has one Google Drive content folder, one media pool, one global
+  settings row, and one global schedule. There is no per-account content library
+  or per-account schedule yet.
+- `post_log` stores one provider post id per publish attempt. If future work
+  needs provider-specific delivery reporting, add an explicit per-account or
+  per-channel delivery model instead of encoding multiple outcomes into one
+  status.
+- Prefer prefixed selectors for any opaque Outstand id or username:
+  `channel:outstandSelector`. The prefix selects the story override, and only
+  the selector after `:` is sent to Outstand.
+- Built-in Story overrides exist for `instagram` and `facebook`. Future
+  story-capable channels can be configured without code only when
+  `OUTSTAND_STORY_CONFIG_JSON` defines the provider-specific override.
+- Known connected Outstand accounts from the July 1, 2026 inventory:
+
+| Network | Username | Outstand selector | Type | Current use |
+|---|---|---|---|---|
+| Instagram | `poterostandard` | `NZOJa` | personal | active Story target |
+| Facebook | `Potero Standard` | `HTPQ5` | page | active Story target |
+| Threads | `poterostandard` | `vBUEg` | personal | not configured |
+| YouTube | `@poterostandard` | `I96WX` | personal | not configured |
+| LinkedIn | `potero-standard` | `cMfKL` | organization | not configured |
+
+Before adding a new network, confirm in Outstand whether it supports the desired
+Story-style publishing payload. Do not assume a feed post, short-form video, and
+Story use the same account selector or platform override.
+
+## Local env setup
+
+`.env.local` is ignored. Pulling from Vercel can refresh non-sensitive
+integration variables, but protected app secrets may still be written as
+placeholders:
+
+```bash
+vercel env pull .env.local --environment=production --yes
+```
+
+After pulling, check only variable names or presence. Do not print values.
+Known safe defaults for local setup:
+
+```bash
+GOOGLE_DRIVE_FOLDER_ID=15H2jnp-Jmg123_KNsUdhIjj-aYU5T6K8
+OUTSTAND_API_BASE_URL=https://api.outstand.so
+OUTSTAND_ACCOUNTS=instagram:NZOJa,facebook:HTPQ5
+OUTSTAND_PUBLISH_AS_STORY=true
+```
+
+The remaining secret values must come from the operator, Vercel runtime, or an
+already-provisioned ignored local file.
 
 ## Optional: delivery webhook
 
