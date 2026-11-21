@@ -7,6 +7,11 @@ Drive folder as the only thing you manage**. Drop a video or image in the folder
 One Next.js app on Vercel + one Postgres database. No queues, no workers, no
 upload UI, no file storage to manage — Drive is the content store.
 
+> **Paused since 2026-11-21.** The publish cron entry was removed from
+> `vercel.json`; nothing is posted on a schedule. See "Publishing is paused" in
+> `AGENTS.md` for how to resume. The rest of this document describes the app as
+> it runs when the cron entry is present.
+
 ## Current production
 
 - App: <https://potero-story-automation.vercel.app>

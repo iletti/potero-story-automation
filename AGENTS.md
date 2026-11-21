@@ -14,6 +14,20 @@ This is a single-tenant Next.js App Router app deployed on Vercel:
 - Cron routes: `/api/cron/sync`, `/api/cron/publish`, and `/api/cron/config`,
   protected by `CRON_SECRET`.
 
+## Publishing is paused (2026-11-21)
+
+Scheduled publishing is off since 2026-11-21: the `/api/cron/publish` entry
+was removed from `vercel.json`, so no cron calls the publish route. Stories are
+published by another system from now on. The Drive sync cron
+(`/api/cron/sync`) still runs and the route itself still exists, so a manual
+"Publish next now" or `publish?force=1` would still post a real Story: do not
+use them.
+
+To resume, restore this entry in `vercel.json` and deploy `main`:
+`{ "path": "/api/cron/publish", "schedule": "0 5,7,9,11,12,14,16,18,20,21 * * *" }`.
+Before resuming, remove from the Drive folder every file the other system has
+published since the pause, or it will be posted twice.
+
 ## Hard rules
 
 - Never print secret values.
